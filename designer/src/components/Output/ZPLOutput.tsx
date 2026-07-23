@@ -1,0 +1,210 @@
+import { useState, type ReactNode } from 'react';
+import { CheckIcon, ClipboardDocumentIcon, ChevronDownIcon, ChevronUpIcon, EyeIcon, PaperAirplaneIcon } from '@heroicons/react/16/solid';
+import { useLabelStore, selectLabelaryNoticeRequired, selectEffectivePreviewProvider } from '../../store/labelStore';
+import { generateMultiPageZPL } from '@zplab/core/lib/zplGenerator';
+import { mmToDots } from '@zplab/core/lib/coordinates';
+import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
+import { useT } from '../../hooks/useT';
+import { LabelaryNoticeModal } from './LabelaryNoticeModal';
+import { ZplLine } from './ZplLine';
+import { Tooltip } from '../ui/Tooltip';
+
+interface Props {
+  collapsed?: boolean;
+  onCollapse?: () => void;
+  onExpand?: () => void;
+}
+
+export function ZPLOutput({ collapsed, onCollapse, onExpand }: Props) {
+  const t = useT();
+  const label = useLabelStore((s) => s.label);
+  const pages = useLabelStore((s) => s.pages);
+  const variables = useLabelStore((s) => s.variables);
+  const labelaryEnabled = useLabelStore((s) => s.thirdParty.labelary);
+  const noticeRequired = useLabelStore(selectLabelaryNoticeRequired);
+  const effectiveProvider = useLabelStore(selectEffectivePreviewProvider);
+  const previewMode = useLabelStore((s) => s.previewMode);
+  const enterPreviewMode = useLabelStore((s) => s.enterPreviewMode);
+  const exitPreviewMode = useLabelStore((s) => s.exitPreviewMode);
+  const [showNotice, setShowNotice] = useState(false);
+  const setUserError = useLabelStore((s) => s.setUserError);
+  const [sendState, setSendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  const hasObjects = pages.some((p) => p.objects.length > 0);
+  const zpl = hasObjects ? generateMultiPageZPL(label, pages, variables) : '';
+
+  const previewActive =
+    previewMode.status === 'loading' || previewMode.status === 'active';
+
+  // The button shows when the effective provider can run: Labelary when the
+  // gate is on, or the printer path (desktop only). The consent notice only
+  // guards Labelary; the printer talks to the user's own device.
+  const previewAvailable = effectiveProvider === 'printer' || labelaryEnabled;
+
+  const togglePreview = () => {
+    if (previewActive) {
+      exitPreviewMode();
+      return;
+    }
+    if (effectiveProvider === 'labelary' && noticeRequired) {
+      setShowNotice(true);
+      return;
+    }
+    void enterPreviewMode();
+  };
+
+  // labl-printr integration: POST the current label to the host app's
+  // same-origin REST API (the designer is served under /designer/ by the
+  // labl-printr Go server). Snapshot state at click-time like the other
+  // export paths. Outside that host (vite dev, Tauri desktop) the fetch
+  // simply fails and surfaces through the standard error banner.
+  const sendToLablPrintr = async () => {
+    const s = useLabelStore.getState();
+    setSendState('sending');
+    try {
+      const res = await fetch('/api/designer-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Designer label',
+          zpl: generateMultiPageZPL(s.label, s.pages, s.variables),
+          widthDots: mmToDots(s.label.widthMm, s.label.dpmm),
+          heightDots: mmToDots(s.label.heightMm, s.label.dpmm),
+          dpmm: s.label.dpmm,
+        }),
+      });
+      if (!res.ok) throw new Error(`labl-printr: HTTP ${res.status}`);
+      setSendState('sent');
+      setTimeout(() => setSendState('idle'), 1500);
+    } catch (e) {
+      setSendState('idle');
+      setUserError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <OutputSection
+        heading={t.output.zplHeading}
+        content={zpl}
+        emptyMessage={t.output.noObjects}
+        collapsed={collapsed}
+        onCollapseToggle={collapsed ? onExpand : onCollapse}
+        collapseLabel={collapsed ? t.app.expand : t.app.collapse}
+        extraActions={<>
+          {previewAvailable && (
+          <Tooltip content={t.output.previewHeading}>
+            <button
+              onClick={togglePreview}
+              disabled={!zpl && !previewActive}
+              aria-pressed={previewActive}
+              className={`flex items-center gap-1 font-mono text-[10px] disabled:opacity-25 disabled:cursor-not-allowed transition-colors ${
+                previewActive
+                  ? 'text-accent hover:text-text'
+                  : 'text-muted hover:text-accent'
+              }`}
+            >
+              <EyeIcon className="w-4 h-4" />
+              {t.output.previewHeading}
+            </button>
+          </Tooltip>
+          )}
+          <Tooltip content="Send to labl-printr">
+            <button
+              onClick={() => void sendToLablPrintr()}
+              disabled={!zpl || sendState === 'sending'}
+              className="flex items-center gap-1 font-mono text-[10px] text-muted hover:text-accent disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+            >
+              {sendState === 'sent'
+                ? <><CheckIcon className="w-4 h-4" />Saved to labl-printr</>
+                : <><PaperAirplaneIcon className="w-4 h-4" />Send to labl-printr</>}
+            </button>
+          </Tooltip>
+        </>}
+      />
+
+      {showNotice && (
+        <LabelaryNoticeModal
+          onClose={() => setShowNotice(false)}
+          onContinue={() => {
+            setShowNotice(false);
+            void enterPreviewMode();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Single output pane: header (collapse toggle + heading + extra
+ *  actions + copy button) and a `<pre>` body. The Setup-Script
+ *  output moved into the Printer Settings modal's docked preview
+ *  pane, so this component no longer needs to host a secondary
+ *  variant; it just shows the per-label ZPL. */
+function OutputSection({
+  heading,
+  content,
+  emptyMessage,
+  collapsed,
+  onCollapseToggle,
+  collapseLabel,
+  extraActions,
+}: {
+  heading: string;
+  content: string;
+  emptyMessage: string;
+  collapsed?: boolean;
+  onCollapseToggle?: () => void;
+  collapseLabel?: string;
+  extraActions?: ReactNode;
+}) {
+  const t = useT();
+  const { copy, copied } = useCopyToClipboard(() => content);
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          {onCollapseToggle && (
+            <Tooltip content={collapseLabel}>
+              <button
+                className="p-0.5 rounded text-muted hover:text-text hover:bg-border transition-colors"
+                onClick={onCollapseToggle}
+                aria-label={collapseLabel}
+              >
+                {collapsed ? <ChevronUpIcon className="w-3.5 h-3.5" /> : <ChevronDownIcon className="w-3.5 h-3.5" />}
+              </button>
+            </Tooltip>
+          )}
+          <span className="font-mono text-[10px] text-muted uppercase tracking-widest">{heading}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {extraActions}
+          <Tooltip content={t.output.copy}>
+            <button
+              onClick={copy}
+              disabled={!content}
+              className="flex items-center gap-1 font-mono text-[10px] text-muted hover:text-accent disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+            >
+              {copied
+                ? <><CheckIcon className="w-4 h-4" />{t.output.copied}</>
+                : <><ClipboardDocumentIcon className="w-4 h-4" />{t.output.copy}</>}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <pre className="overflow-auto p-3 font-mono text-xs leading-relaxed text-text m-0 bg-surface flex-1">
+          {content
+            ? content.split('\n').map((line, i) => (
+                <ZplLine key={i} line={line} />
+              ))
+            : <span className="text-muted">{emptyMessage}</span>
+          }
+        </pre>
+      )}
+    </div>
+  );
+}
+

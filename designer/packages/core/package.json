@@ -1,0 +1,21 @@
+{
+  "name": "@zplab/core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./registry": {
+      "types": "./src/registry/index.ts",
+      "default": "./src/registry/index.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "dependencies": {
+    "bwip-js": "catalog:",
+    "fflate": "catalog:",
+    "zod": "catalog:"
+  }
+}
