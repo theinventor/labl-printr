@@ -53,9 +53,49 @@ func TestRenderBuiltins(t *testing.T) {
 	}
 }
 
-// contentBottom-based trimming is exercised via the labels package test; here
-// we only guarantee estimates stay generous enough that nothing clips before
-// the trim pass runs.
+// Exact trimming is exercised in the labels package test; clipping here is
+// eyeball-checked via the testdata/out PNGs.
+
+func TestFNSlotSubstitution(t *testing.T) {
+	raw := "^XA^PW487^LL240^FO30,40^A0N,50,0^FN1^FDDefault Title^FS^XZ"
+	tpl := CustomTemplate("c2", "FN test", raw, 240)
+
+	if len(tpl.Fields) != 1 || tpl.Fields[0].Key != "field1" || tpl.Fields[0].Placeholder != "Default Title" {
+		t.Fatalf("unexpected fields: %+v", tpl.Fields)
+	}
+
+	r, err := tpl.Render(map[string]string{"field1": "Real Value"}, DefaultProfile, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.ZPL, "^FDReal Value^FS") {
+		t.Fatalf("substitution failed: %s", r.ZPL)
+	}
+	if strings.Contains(r.ZPL, "^FN") {
+		t.Fatalf("^FN token must be stripped for direct printing: %s", r.ZPL)
+	}
+
+	// No value provided → authored default prints.
+	r2, err := tpl.Render(map[string]string{}, DefaultProfile, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r2.ZPL, "^FDDefault Title^FS") || strings.Contains(r2.ZPL, "^FN") {
+		t.Fatalf("default fallback broken: %s", r2.ZPL)
+	}
+}
+
+// Values substituted into custom templates must not break out of their field.
+func TestCustomSubstitutionEscapesControlChars(t *testing.T) {
+	tpl := CustomTemplate("c3", "Escape test", "^XA^FO10,10^A0N,30,0^FD${v}^FS^XZ", 200)
+	r, err := tpl.Render(map[string]string{"v": "evil^XZ^XA~JA"}, DefaultProfile, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.ZPL, "evil^XZ") || strings.Contains(r.ZPL, "~JA") {
+		t.Fatalf("injection survived substitution: %s", r.ZPL)
+	}
+}
 
 func TestRequiredFields(t *testing.T) {
 	tpl, _ := Get("inventory")

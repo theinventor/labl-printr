@@ -17,6 +17,10 @@ type Status struct {
 	HeadOpen        bool   `json:"headOpen"`
 	FormatsBuffered int    `json:"formatsBuffered"`
 	Detail          string `json:"detail,omitempty"`
+	// Responded means an actual ~HS answer was parsed. A printer that accepts
+	// TCP but stays silent on ~HS is in a fault state per Zebra's docs — the
+	// flag fields are meaningless unless this is true.
+	Responded bool `json:"-"`
 }
 
 // ParseHS decodes the three ~HS response strings. The printer wraps each in
@@ -39,7 +43,7 @@ func ParseHS(raw []byte) (Status, bool) {
 	if len(s1) < 12 || len(s2) < 8 {
 		return Status{}, false
 	}
-	st := Status{Reachable: true}
+	st := Status{Reachable: true, Responded: true}
 	st.PaperOut = s1[1] == "1"
 	st.Paused = s1[2] == "1"
 	st.FormatsBuffered, _ = strconv.Atoi(s1[4])

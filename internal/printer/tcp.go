@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-const (
+// vars, not consts: tests shrink these to drive the drain loop quickly.
+var (
 	dialTimeout   = 3 * time.Second
 	statusTimeout = 2 * time.Second
 	drainTimeout  = 45 * time.Second
@@ -79,12 +80,14 @@ func (t *TCP) Send(zpl string) error {
 	}
 
 	deadline := time.Now().Add(drainTimeout)
+	confirmed := false
 	for time.Now().Before(deadline) {
 		time.Sleep(drainInterval)
 		st := t.Status()
-		if !st.Reachable {
+		if !st.Responded {
 			continue
 		}
+		confirmed = true
 		if st.PaperOut || st.HeadOpen {
 			return fmt.Errorf("printer fault while printing: %s", st.Detail)
 		}
@@ -92,5 +95,11 @@ func (t *TCP) Send(zpl string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("timed out waiting for printer to finish (job may still print)")
+	// Distinguish "printer went quiet" from "printer still busy": both mean
+	// the ZPL was delivered, so steer the user to check paper before
+	// reprinting rather than implying the job vanished.
+	if !confirmed {
+		return fmt.Errorf("job was sent but the printer stopped answering status checks — check the printer before reprinting")
+	}
+	return fmt.Errorf("job was sent but still unconfirmed after %s — check the printer before reprinting", drainTimeout)
 }

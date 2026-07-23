@@ -36,12 +36,15 @@ func NewLabel(widthDots, lengthDots, leftShift int) *Label {
 	return l
 }
 
-// escape sanitizes field data: ^ and ~ are ZPL control characters, and \ is
-// the hex-escape introducer inside ^FD.
-func escape(s string) string {
+// Escape sanitizes field data: ^ and ~ are ZPL control characters, and \ is
+// the hex-escape introducer inside ^FD. Also used by the custom-template
+// substitution path so user values can never break out of their field.
+func Escape(s string) string {
 	r := strings.NewReplacer("^", " ", "~", " ", "\\", "/")
 	return r.Replace(s)
 }
+
+func escape(s string) string { return Escape(s) }
 
 // Text places a single line of scalable font A0 text at x,y with the given
 // character height in dots.
@@ -56,14 +59,17 @@ func (l *Label) TextBlock(x, y, fontHeight, width, maxLines, lineGap int, justif
 		x, y, fontHeight, width, maxLines, lineGap, justify, escape(text))
 }
 
-// InverseBar draws a filled bar and switches the fields drawn inside fn to
-// white-on-black (^FR reverses each field against the bar).
+// InverseText draws a filled bar with centered white-on-black text (^FR
+// reverses the field against the bar).
 func (l *Label) InverseText(x, y, w, h, fontHeight int, text string) {
 	fmt.Fprintf(&l.buf, "^FO%d,%d^GB%d,%d,%d,B,0^FS\n", x, y, w, h, h)
 	textY := y + (h-fontHeight)/2
 	fmt.Fprintf(&l.buf, "^FO%d,%d^A0N,%d,0^FB%d,1,0,C,0^FR^FD%s^FS\n",
 		x, textY, fontHeight, w, escape(text))
 }
+
+// Box, HLine, Raw, and JustifyRight round out the builder's public surface;
+// not every template uses every primitive yet.
 
 // Box draws a rectangle outline.
 func (l *Label) Box(x, y, w, h, thickness int) {
@@ -76,9 +82,26 @@ func (l *Label) HLine(x, y, w, thickness int) {
 }
 
 // QR places a model-2 QR code. magnification 1–10; data is encoded in
-// automatic mode with ECC level M (good default for URLs).
+// automatic mode with ECC level M (good default for URLs). ^FH enables _XX
+// hex escapes so ZPL control characters survive inside the payload byte-exact
+// (escape() would corrupt URLs containing ^, ~, or backslash).
 func (l *Label) QR(x, y, magnification int, data string) {
-	fmt.Fprintf(&l.buf, "^FO%d,%d^BQN,2,%d^FDMA,%s^FS\n", x, y, magnification, escape(data))
+	fmt.Fprintf(&l.buf, "^FO%d,%d^BQN,2,%d^FH^FDMA,%s^FS\n", x, y, magnification, hexEscape(data))
+}
+
+// hexEscape encodes ^FH field data: the hex-escape introducer _ plus ZPL's
+// control characters become _XX hex codes.
+func hexEscape(s string) string {
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		switch c {
+		case '_', '^', '~', '\\':
+			fmt.Fprintf(&b, "_%02X", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // Raw appends a raw ZPL fragment verbatim.

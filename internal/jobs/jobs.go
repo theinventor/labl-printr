@@ -34,15 +34,17 @@ func (m *Manager) Resume() {
 	}
 	for _, j := range pending {
 		if j.State == store.JobPrinting {
-			_ = m.store.SetJobState(j.ID, store.JobFailed, "server restarted mid-print; reprint if it didn't come out")
+			m.setState(j.ID, store.JobFailed, "server restarted mid-print; reprint if it didn't come out")
 			continue
 		}
 		m.Enqueue(j)
 	}
 }
 
-// Enqueue hands a queued job to its printer's worker.
-func (m *Manager) Enqueue(j store.Job) {
+// Enqueue hands a queued job to its printer's worker. Returns false when the
+// queue is full — the job is already marked failed and the caller should
+// report that, not "queued".
+func (m *Manager) Enqueue(j store.Job) bool {
 	m.mu.Lock()
 	q, ok := m.queues[j.PrinterID]
 	if !ok {
@@ -53,8 +55,10 @@ func (m *Manager) Enqueue(j store.Job) {
 	m.mu.Unlock()
 	select {
 	case q <- j.ID:
+		return true
 	default:
-		_ = m.store.SetJobState(j.ID, store.JobFailed, "print queue full")
+		m.setState(j.ID, store.JobFailed, "print queue full")
+		return false
 	}
 }
 
@@ -65,35 +69,56 @@ func (m *Manager) worker(printerID int64, q chan int64) {
 }
 
 func (m *Manager) run(printerID, jobID int64) {
+	// The render/send path parses stored ZPL; a panic must fail one job, not
+	// the whole worker (goroutine panics would kill the server).
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("jobs: recovered from panic on job %d: %v", jobID, r)
+			m.setState(jobID, store.JobFailed, "internal error while printing")
+		}
+	}()
 	j, err := m.store.Job(jobID)
-	if err != nil || j.State != store.JobQueued {
+	if err != nil {
+		log.Printf("jobs: load job %d: %v", jobID, err)
+		return
+	}
+	if j.State != store.JobQueued {
 		return
 	}
 	p, err := m.store.Printer(printerID)
 	if err != nil {
-		_ = m.store.SetJobState(jobID, store.JobFailed, "printer no longer exists")
+		m.setState(jobID, store.JobFailed, "printer no longer exists")
 		return
 	}
-	_ = m.store.SetJobState(jobID, store.JobPrinting, "")
+	m.setState(jobID, store.JobPrinting, "")
 
 	var sendErr error
 	switch p.Kind {
-	case "virtual":
+	case store.KindVirtual:
 		sendErr = m.virtual.SendJob(jobID, j.ZPL)
 	default:
 		t := &printer.TCP{Host: p.Host, Port: p.Port}
 		sendErr = t.Send(j.ZPL)
 	}
 	if sendErr != nil {
-		_ = m.store.SetJobState(jobID, store.JobFailed, sendErr.Error())
+		m.setState(jobID, store.JobFailed, sendErr.Error())
 		return
 	}
-	_ = m.store.SetJobState(jobID, store.JobDone, "")
+	m.setState(jobID, store.JobDone, "")
+}
+
+// setState logs persistence failures instead of swallowing them — a job whose
+// state can't be written would otherwise resurrect as "queued" after restart
+// and print a duplicate.
+func (m *Manager) setState(jobID int64, state, errMsg string) {
+	if err := m.store.SetJobState(jobID, state, errMsg); err != nil {
+		log.Printf("jobs: CRITICAL: failed to mark job %d as %s: %v", jobID, state, err)
+	}
 }
 
 // PrinterStatus returns live status for a printer record.
 func (m *Manager) PrinterStatus(p store.Printer) printer.Status {
-	if p.Kind == "virtual" {
+	if p.Kind == store.KindVirtual {
 		return m.virtual.Status()
 	}
 	t := &printer.TCP{Host: p.Host, Port: p.Port}

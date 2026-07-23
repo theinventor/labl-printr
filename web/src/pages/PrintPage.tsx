@@ -13,11 +13,14 @@ function TemplateCard({
   t,
   active,
   onClick,
+  onDelete,
 }: {
   t: Template;
   active: boolean;
   onClick: () => void;
+  onDelete?: () => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   return (
     <button
       onClick={onClick}
@@ -32,8 +35,32 @@ function TemplateCard({
           <path d={templateIcons[t.id] ?? 'M4 4h16v16H4z'} />
         </svg>
         {!t.builtin && (
-          <span className="rounded-full border border-edge-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
-            custom
+          <span className="flex items-center gap-1.5">
+            <span className="rounded-full border border-edge-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+              custom
+            </span>
+            {onDelete && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirming) {
+                    onDelete();
+                  } else {
+                    setConfirming(true);
+                    setTimeout(() => setConfirming(false), 3000);
+                  }
+                }}
+                className={`rounded-full border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                  confirming
+                    ? 'border-accent/60 bg-accent/10 text-accent-hi'
+                    : 'border-edge-2 text-fg-dim opacity-0 group-hover:opacity-100 hover:text-accent-hi'
+                }`}
+              >
+                {confirming ? 'sure?' : '✕'}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -124,10 +151,11 @@ export function PrintPage() {
 
   const setVar = (key: string, value: string) => setVars((v) => ({ ...v, [key]: value }));
 
-  const widthIn = preview ? preview.widthDots / 203 : 2.4;
-  const lengthIn = preview ? preview.lengthDots / 203 : 0;
-  // Actual size: 203 dots-per-inch rendered at CSS 96px-per-inch.
-  const previewCssWidth = actualSize ? `${(preview?.widthDots ?? 487) / 203}in` : '100%';
+  const dpi = (preview?.dpmm || 8) * 25.4;
+  const widthIn = preview ? preview.widthDots / dpi : 2.4;
+  const lengthIn = preview ? preview.lengthDots / dpi : 0;
+  // Actual size: printer dots-per-inch rendered at CSS 96px-per-inch.
+  const previewCssWidth = actualSize ? `${(preview?.widthDots ?? 487) / dpi}in` : '100%';
 
   return (
     <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -146,6 +174,25 @@ export function PrintPage() {
               setVars({});
               setPreview(null);
             }}
+            onDelete={
+              t.builtin
+                ? undefined
+                : async () => {
+                    try {
+                      await api.deleteTemplate(t.id);
+                      const list = await api.templates();
+                      setTemplates(list);
+                      if (selected === t.id && list.length) {
+                        setSelected(list[0].id);
+                        setVars({});
+                        setPreview(null);
+                      }
+                      toast('ok', `Deleted template "${t.name}"`);
+                    } catch (e) {
+                      toast('err', (e as Error).message);
+                    }
+                  }
+            }
           />
         ))}
         {templates.length === 0 && <Spinner />}

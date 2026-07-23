@@ -17,9 +17,34 @@ import (
 const (
 	bottomMargin = 16
 	minLength    = 64
+	// TrimHeadroom is the extra render length used to measure true content
+	// height before trimming.
+	TrimHeadroom = 80
+
+	// Untrusted ZPL (raw API jobs, the open 9100 listener, designer imports)
+	// declares its own canvas; unbounded ^PW/^LL would let a 30-byte payload
+	// demand a multi-gigabyte allocation. Caps sized to real hardware: widest
+	// Zebra head at 24dpmm ≈ 2500 dots, longest printable label 39" @ 300dpi
+	// ≈ 11700 dots.
+	MaxWidthDots  = 2600
+	MaxLengthDots = 12000
 )
 
-var llRe = regexp.MustCompile(`\^LL(\d+)`)
+var (
+	llRe = regexp.MustCompile(`\^LL(\d+)`)
+	pwRe = regexp.MustCompile(`\^PW(\d+)`)
+)
+
+// clampDims bounds untrusted geometry to hardware-plausible sizes.
+func clampDims(w, l int) (int, int) {
+	if w > MaxWidthDots {
+		w = MaxWidthDots
+	}
+	if l > MaxLengthDots {
+		l = MaxLengthDots
+	}
+	return w, l
+}
 
 // Final is a fully finished, printable label.
 type Final struct {
@@ -49,7 +74,7 @@ func Finalize(t *templates.Template, vars map[string]string, p templates.Profile
 	}
 
 	// Render with headroom so nothing clips, then measure true content height.
-	generous := r.LengthDots + 80
+	generous := r.LengthDots + TrimHeadroom
 	raw, err := render.PNG(withLength(r.ZPL, generous), p.WidthDots, generous, p.Dpmm)
 	if err != nil {
 		return Final{}, err
@@ -98,7 +123,7 @@ func contentBottom(img image.Image) int {
 func Dims(zpl string) (widthDots, lengthDots int) {
 	widthDots = templates.DefaultProfile.WidthDots
 	lengthDots = 600
-	if m := regexp.MustCompile(`\^PW(\d+)`).FindStringSubmatch(zpl); m != nil {
+	if m := pwRe.FindStringSubmatch(zpl); m != nil {
 		if v, err := strconv.Atoi(m[1]); err == nil && v > 0 {
 			widthDots = v
 		}
@@ -108,5 +133,5 @@ func Dims(zpl string) (widthDots, lengthDots int) {
 			lengthDots = v
 		}
 	}
-	return widthDots, lengthDots
+	return clampDims(widthDots, lengthDots)
 }

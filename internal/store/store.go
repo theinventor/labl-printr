@@ -6,8 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"time"
+	"log"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -81,6 +81,11 @@ CREATE TABLE IF NOT EXISTS virtual_prints (
 }
 
 // ---- Printers
+
+const (
+	KindNetwork = "network"
+	KindVirtual = "virtual"
+)
 
 type Printer struct {
 	ID        int64  `json:"id"`
@@ -265,14 +270,27 @@ func (s *Store) CreateJob(j Job) (Job, bool, error) {
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		j.PrinterID, nullable(j.TemplateID), string(vars), j.ZPL, j.WidthDots, j.LengthDots, j.Copies, JobQueued, nullable(j.IdempotencyKey), j.Source)
 	if err != nil {
+		// Two submits raced on the same idempotency key: the UNIQUE index
+		// rejected ours, so the winner's job is the caller's job.
+		if j.IdempotencyKey != "" && strings.Contains(err.Error(), "UNIQUE") {
+			if existing, qerr := s.JobByIdempotencyKey(j.IdempotencyKey); qerr == nil {
+				return existing, true, nil
+			}
+		}
 		return Job{}, false, err
 	}
 	id, _ := res.LastInsertId()
+	s.PruneJobs()
 	created, err := s.Job(id)
 	return created, false, err
 }
 
 const jobCols = `j.id, j.printer_id, COALESCE(p.name,''), j.template_id, j.vars, j.zpl, j.width_dots, j.length_dots,
+	j.copies, j.state, j.error, j.idempotency_key, j.source, j.created_at, j.updated_at`
+
+// jobColsList swaps the ZPL payload for an empty literal: list endpoints never
+// serialize it, and raw jobs can be megabytes each.
+const jobColsList = `j.id, j.printer_id, COALESCE(p.name,''), j.template_id, j.vars, '', j.width_dots, j.length_dots,
 	j.copies, j.state, j.error, j.idempotency_key, j.source, j.created_at, j.updated_at`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
@@ -299,7 +317,7 @@ func (s *Store) Jobs(limit int) ([]Job, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, err := s.db.Query("SELECT "+jobCols+" FROM jobs j LEFT JOIN printers p ON p.id = j.printer_id ORDER BY j.id DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT "+jobColsList+" FROM jobs j LEFT JOIN printers p ON p.id = j.printer_id ORDER BY j.id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +334,7 @@ func (s *Store) Jobs(limit int) ([]Job, error) {
 }
 
 func (s *Store) QueuedJobs() ([]Job, error) {
-	rows, err := s.db.Query("SELECT " + jobCols + " FROM jobs j LEFT JOIN printers p ON p.id = j.printer_id WHERE j.state IN ('queued','printing') ORDER BY j.id")
+	rows, err := s.db.Query("SELECT " + jobColsList + " FROM jobs j LEFT JOIN printers p ON p.id = j.printer_id WHERE j.state IN ('queued','printing') ORDER BY j.id")
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +366,9 @@ type VirtualPrint struct {
 
 func (s *Store) AddVirtualPrint(jobID *int64, zpl string, png []byte) error {
 	_, err := s.db.Exec("INSERT INTO virtual_prints (job_id, zpl, png) VALUES (?,?,?)", jobID, zpl, png)
+	if err == nil {
+		s.pruneVirtualPrints()
+	}
 	return err
 }
 
@@ -395,5 +416,24 @@ func boolInt(b bool) int {
 	return 0
 }
 
-var _ = fmt.Sprintf
-var _ = time.Now
+// pruneVirtualPrints keeps the tray from growing without bound.
+const trayKeep = 400
+
+func (s *Store) pruneVirtualPrints() {
+	if _, err := s.db.Exec(`DELETE FROM virtual_prints WHERE id NOT IN
+		(SELECT id FROM virtual_prints ORDER BY id DESC LIMIT ?)`, trayKeep); err != nil {
+		log.Printf("store: tray prune failed: %v", err)
+	}
+}
+
+// PruneJobs keeps history browsable but bounded — each row carries its full
+// ZPL for reprint, so an immortal jobs table grows by the payload size on
+// every print.
+const jobsKeep = 2000
+
+func (s *Store) PruneJobs() {
+	if _, err := s.db.Exec(`DELETE FROM jobs WHERE id NOT IN
+		(SELECT id FROM jobs ORDER BY id DESC LIMIT ?)`, jobsKeep); err != nil {
+		log.Printf("store: jobs prune failed: %v", err)
+	}
+}

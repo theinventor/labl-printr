@@ -26,6 +26,11 @@ func AllPNG(zpl string, widthDots, lengthDots, dpmm int) ([][]byte, error) {
 	if dpmm <= 0 {
 		dpmm = 8
 	}
+	// Last line of defense against giant-canvas allocations — geometry should
+	// already be clamped upstream (labels.Dims, designer import validation).
+	if widthDots > 4000 || lengthDots > 16000 {
+		return nil, fmt.Errorf("label dimensions %dx%d dots exceed hardware-plausible bounds", widthDots, lengthDots)
+	}
 	labels, err := zebrash.NewParser().Parse([]byte(zpl))
 	if err != nil {
 		return nil, fmt.Errorf("parse zpl: %w", err)

@@ -270,16 +270,18 @@ func CustomTemplate(id, name string, rawZPL string, lengthDots int) *Template {
 		Fields:      fields,
 		Builtin:     false,
 		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
+			// User values pass through zpl.Escape so they can never carry ^/~
+			// control characters out of their field (same guard as builtins).
 			out := placeholderRe.ReplaceAllStringFunc(rawZPL, func(m string) string {
 				key := placeholderRe.FindStringSubmatch(m)[1]
-				return vars[key]
+				return zpl.Escape(vars[key])
 			})
 			// Substitute ^FN slot values, then strip the ^FN tokens: outside a
 			// ^DF stored format they suppress the field instead of printing it.
 			out = fnSlotRe.ReplaceAllStringFunc(out, func(m string) string {
 				sub := fnSlotRe.FindStringSubmatch(m)
 				if v, ok := vars["field"+sub[1]]; ok && v != "" {
-					return "^FD" + v
+					return "^FD" + zpl.Escape(v)
 				}
 				return "^FD" + sub[2]
 			})

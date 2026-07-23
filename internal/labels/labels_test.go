@@ -40,7 +40,7 @@ func TestFinalizeTrimsToContent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if f.LengthDots > est.LengthDots+80 {
+			if f.LengthDots > est.LengthDots+TrimHeadroom {
 				t.Fatalf("trim grew label: est %d → final %d", est.LengthDots, f.LengthDots)
 			}
 			if !strings.Contains(f.ZPL, fmt.Sprintf("^LL%d", f.LengthDots)) {
@@ -61,5 +61,13 @@ func TestDims(t *testing.T) {
 	w, l = Dims("^XA^FDno geometry^XZ")
 	if w != 487 || l != 600 {
 		t.Fatalf("fallback got %d x %d", w, l)
+	}
+}
+
+// A 30-byte payload must not be able to demand a multi-gigabyte render canvas.
+func TestDimsClampsHostileGeometry(t *testing.T) {
+	w, l := Dims("^XA^PW200000^LL200000^XZ")
+	if w != MaxWidthDots || l != MaxLengthDots {
+		t.Fatalf("hostile dims not clamped: %d x %d", w, l)
 	}
 }

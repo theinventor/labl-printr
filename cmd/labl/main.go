@@ -130,8 +130,12 @@ func cmdPrint() *cobra.Command {
 				if err := newClient().do("POST", "/api/preview", body, &res); err != nil {
 					return err
 				}
+				dpi := 25.4 * float64(res.Dpmm)
+				if res.Dpmm == 0 {
+					dpi = 203
+				}
 				fmt.Printf("dry run — label renders %d×%d dots (%.1f×%.2f in). Nothing printed.\n",
-					res.WidthDots, res.LengthDots, float64(res.WidthDots)/203, float64(res.LengthDots)/203)
+					res.WidthDots, res.LengthDots, float64(res.WidthDots)/dpi, float64(res.LengthDots)/dpi)
 				return nil
 			}
 			var job jobInfo

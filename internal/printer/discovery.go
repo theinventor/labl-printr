@@ -9,9 +9,8 @@ import (
 
 // Discovered is one printer that answered the Zebra discovery broadcast.
 type Discovered struct {
-	IP      string   `json:"ip"`
-	Info    []string `json:"info"` // printable fields from the response, e.g. model, name, serial
-	RawSize int      `json:"rawSize"`
+	IP   string   `json:"ip"`
+	Info []string `json:"info"` // printable fields from the response, e.g. model, name, serial
 }
 
 // Zebra's proprietary discovery: broadcast magic bytes to UDP 4201; printers
@@ -51,7 +50,7 @@ func Discover(wait time.Duration) ([]Discovered, error) {
 			continue
 		}
 		seen[ip] = true
-		found = append(found, Discovered{IP: ip, Info: printableRuns(buf[:n], 4), RawSize: n})
+		found = append(found, Discovered{IP: ip, Info: printableRuns(buf[:n], 4)})
 	}
 	return found, nil
 }

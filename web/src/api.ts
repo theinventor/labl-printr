@@ -56,6 +56,7 @@ export type Preview = {
   zpl: string;
   widthDots: number;
   lengthDots: number;
+  dpmm: number;
 };
 
 export type TrayPrint = { id: number; jobId?: number; createdAt: string };

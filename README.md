@@ -76,6 +76,10 @@ GET  /api/jobs/{id}/preview.png     GET  /api/tray/{id}.png
 
 Job states: `queued → printing → done | failed`. Pass `idempotencyKey` on `POST /api/jobs` and retries return the existing job instead of printing twice.
 
+## Security model
+
+labl-printr has **no authentication, by design** — it trusts your LAN exactly the way a network printer does (anyone who can reach port 9100 on a Zebra can print to it; anyone who can reach labl-printr can too). Run it on a trusted network (LAN/tailnet). Don't port-forward it to the internet. Inputs are still hardened: request bodies are capped, hostile ZPL geometry is clamped, template variables are escaped so they can't inject ZPL commands, and the 9100 listener is panic-isolated and connection-capped.
+
 ## Architecture notes
 
 Single Go binary: chi HTTP server + SQLite (pure-Go driver) + embedded [zebrash](https://github.com/ingridhq/zebrash) ZPL renderer — previews and the virtual printer render the **exact bytes** sent to hardware, so preview == print. The ZPL builder is ~200 lines in `internal/zpl` (kept in-house so the project stays MIT; the fancier layout engines are GPL). Research on the landscape that shaped all this: [RESEARCH.md](RESEARCH.md).

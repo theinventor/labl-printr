@@ -3,9 +3,11 @@
 package server
 
 import (
+	"database/sql"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -42,6 +44,12 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			req.Body = http.MaxBytesReader(w, req.Body, 8<<20)
+			next.ServeHTTP(w, req)
+		})
+	})
 
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/templates", s.listTemplates)
@@ -196,6 +204,7 @@ type previewResp struct {
 	ZPL        string `json:"zpl"`
 	WidthDots  int    `json:"widthDots"`
 	LengthDots int    `json:"lengthDots"`
+	Dpmm       int    `json:"dpmm"`
 }
 
 func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +213,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: %v", err)
 		return
 	}
-	f, err := s.finalize(req)
+	f, dpmm, err := s.finalize(req)
 	if err != nil {
 		writeErr(w, 422, "%v", err)
 		return
@@ -214,26 +223,29 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		ZPL:        f.ZPL,
 		WidthDots:  f.WidthDots,
 		LengthDots: f.LengthDots,
+		Dpmm:       dpmm,
 	})
 }
 
-func (s *Server) finalize(req previewReq) (labels.Final, error) {
+func (s *Server) finalize(req previewReq) (labels.Final, int, error) {
 	if req.ZPL != "" {
 		wDots, lDots := labels.Dims(req.ZPL)
-		png, err := render.PNG(req.ZPL, wDots, lDots, 8)
+		dpmm := templates.DefaultProfile.Dpmm
+		png, err := render.PNG(req.ZPL, wDots, lDots, dpmm)
 		if err != nil {
-			return labels.Final{}, err
+			return labels.Final{}, 0, err
 		}
-		return labels.Final{ZPL: req.ZPL, WidthDots: wDots, LengthDots: lDots, PNG: png}, nil
+		return labels.Final{ZPL: req.ZPL, WidthDots: wDots, LengthDots: lDots, PNG: png}, dpmm, nil
 	}
 	t, profile, err := s.resolveTemplate(req.TemplateID)
 	if err != nil {
-		return labels.Final{}, err
+		return labels.Final{}, 0, err
 	}
 	if p, perr := s.resolvePrinter(req.PrinterID, req.PrinterName); perr == nil && t.Builtin {
 		profile = profileFor(p)
 	}
-	return labels.Finalize(t, req.Vars, profile, req.Copies)
+	f, err := labels.Finalize(t, req.Vars, profile, req.Copies)
+	return f, profile.Dpmm, err
 }
 
 // ---- jobs
@@ -250,21 +262,32 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: %v", err)
 		return
 	}
+	// Idempotent replays return the existing job before any render work.
+	if req.IdempotencyKey != "" {
+		if existing, err := s.Store.JobByIdempotencyKey(req.IdempotencyKey); err == nil {
+			writeJSON(w, 200, existing)
+			return
+		}
+	}
 	p, err := s.resolvePrinter(req.PrinterID, req.PrinterName)
 	if err != nil {
 		writeErr(w, 422, "no printer available: %v", err)
 		return
 	}
-	f, err := s.finalize(req.previewReq)
+	if req.Copies < 1 {
+		req.Copies = 1
+	}
+	if req.Copies > 100 {
+		writeErr(w, 422, "copies capped at 100 (asked for %d)", req.Copies)
+		return
+	}
+	f, _, err := s.finalize(req.previewReq)
 	if err != nil {
 		writeErr(w, 422, "%v", err)
 		return
 	}
 	if req.Source == "" {
 		req.Source = "api"
-	}
-	if req.Copies < 1 {
-		req.Copies = 1
 	}
 	job, existed, err := s.Store.CreateJob(store.Job{
 		PrinterID:      p.ID,
@@ -281,8 +304,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "%v", err)
 		return
 	}
-	if !existed {
-		s.Jobs.Enqueue(job)
+	if !existed && !s.Jobs.Enqueue(job) {
+		// Queue overflow: the job row is already marked failed — report that
+		// honestly instead of a phantom "queued".
+		if reloaded, rerr := s.Store.Job(job.ID); rerr == nil {
+			job = reloaded
+		}
+		writeJSON(w, 503, job)
+		return
 	}
 	status := 201
 	if existed {
@@ -321,7 +350,11 @@ func (s *Server) jobPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "job not found")
 		return
 	}
-	png, err := render.PNG(j.ZPL, j.WidthDots, j.LengthDots, 8)
+	dpmm := 8
+	if p, perr := s.Store.Printer(j.PrinterID); perr == nil && p.Dpmm > 0 {
+		dpmm = p.Dpmm
+	}
+	png, err := render.PNG(j.ZPL, j.WidthDots, j.LengthDots, dpmm)
 	if err != nil {
 		writeErr(w, 500, "render: %v", err)
 		return
@@ -371,12 +404,12 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: %v", err)
 		return
 	}
-	if p.Name == "" || (p.Kind != "virtual" && p.Host == "") {
+	if p.Name == "" || (p.Kind != store.KindVirtual && p.Host == "") {
 		writeErr(w, 422, "name and host are required")
 		return
 	}
 	if p.Kind == "" {
-		p.Kind = "network"
+		p.Kind = store.KindNetwork
 	}
 	if p.Port == 0 {
 		p.Port = 9100
@@ -384,8 +417,20 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 	if p.Dpmm == 0 {
 		p.Dpmm = 8
 	}
+	// Per-dpi geometry for 2.4" media lives here, not in the web form, so
+	// printers added via CLI or curl get the same dot math and the ZD-series
+	// narrow-media centering shift.
 	if p.WidthDots == 0 {
 		p.WidthDots = 487
+		if p.Dpmm == 12 {
+			p.WidthDots = 720
+		}
+	}
+	if p.LeftShift == 0 && p.Kind == store.KindNetwork {
+		p.LeftShift = 172
+		if p.Dpmm == 12 {
+			p.LeftShift = 280
+		}
 	}
 	created, err := s.Store.CreatePrinter(p)
 	if err != nil {
@@ -402,7 +447,7 @@ func (s *Server) deletePrinter(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "printer not found")
 		return
 	}
-	if p.Kind == "virtual" {
+	if p.Kind == store.KindVirtual {
 		writeErr(w, 400, "the virtual printer can't be deleted")
 		return
 	}
@@ -415,6 +460,12 @@ func (s *Server) deletePrinter(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) setDefaultPrinter(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if _, err := s.Store.Printer(id); err != nil {
+		// Guard before the UPDATE: a bad id would otherwise clear every
+		// default and silently shift printing to the lowest-id printer.
+		writeErr(w, 404, "printer not found")
+		return
+	}
 	if err := s.Store.SetDefaultPrinter(id); err != nil {
 		writeErr(w, 500, "%v", err)
 		return
@@ -475,20 +526,29 @@ func (s *Server) designerImport(w http.ResponseWriter, r *http.Request) {
 	if req.WidthDots == 0 || req.HeightDots == 0 {
 		req.WidthDots, req.HeightDots = labels.Dims(req.ZPL)
 	}
+	if req.WidthDots > labels.MaxWidthDots || req.HeightDots > labels.MaxLengthDots {
+		writeErr(w, 422, "label dimensions %dx%d dots exceed hardware-plausible bounds", req.WidthDots, req.HeightDots)
+		return
+	}
 	slug := strings.Trim(slugRe.ReplaceAllString(strings.ToLower(req.Name), "-"), "-")
 	if slug == "" {
 		slug = "designer-label"
 	}
 	// Uniquify against builtins and existing customs so an import never
-	// silently overwrites a different label.
+	// silently overwrites a different label. Re-importing the same name is an
+	// intentional update (upsert).
 	if _, isBuiltin := templates.Get(slug); isBuiltin {
 		slug += "-custom"
 	}
 	base := slug
 	for i := 2; ; i++ {
 		existing, err := s.Store.CustomTemplateBySlug(slug)
-		if err != nil || existing.Name == req.Name {
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && existing.Name == req.Name) {
 			break
+		}
+		if err != nil {
+			writeErr(w, 500, "%v", err)
+			return
 		}
 		slug = fmt.Sprintf("%s-%d", base, i)
 	}

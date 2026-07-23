@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/theinventor/labl-printr/internal/jobs"
 	"github.com/theinventor/labl-printr/internal/printer"
@@ -47,8 +48,16 @@ func main() {
 	}
 
 	s := &server.Server{Store: st, Jobs: manager, Virtual: virtual}
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           s.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
 	log.Printf("labl-printr serving on %s", *addr)
-	if err := http.ListenAndServe(*addr, s.Router()); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -61,12 +70,12 @@ func ensureVirtualPrinter(st *store.Store) {
 		log.Fatalf("list printers: %v", err)
 	}
 	for _, p := range printers {
-		if p.Kind == "virtual" {
+		if p.Kind == store.KindVirtual {
 			return
 		}
 	}
 	_, err = st.CreatePrinter(store.Printer{
-		Name: "Virtual printer", Kind: "virtual", Dpmm: 8, WidthDots: 487,
+		Name: "Virtual printer", Kind: store.KindVirtual, Dpmm: 8, WidthDots: 487,
 		IsDefault: len(printers) == 0,
 	})
 	if err != nil {

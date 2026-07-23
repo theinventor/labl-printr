@@ -140,4 +140,5 @@ type previewResult struct {
 	ZPL        string `json:"zpl"`
 	WidthDots  int    `json:"widthDots"`
 	LengthDots int    `json:"lengthDots"`
+	Dpmm       int    `json:"dpmm"`
 }
