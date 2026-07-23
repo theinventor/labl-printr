@@ -1,0 +1,230 @@
+import type { LabelObjectBase } from "../types/LabelObject";
+import type { ZplEmitContext } from "../types/ZplEmit";
+import { hasTemplateMarkers, markersToEmbeds } from "../lib/fnTemplate";
+import { hasClockMarkers, markersToTokens } from "../lib/fcTemplate";
+import { hasControlMarkers, resolveControlMarkers } from "../types/controlKey";
+import { classifyField } from "../lib/variableField";
+import { modelToZplAnchor } from "../lib/labelGeometry/textPositionTransforms";
+import { getTextRenderMetrics } from "../lib/labelGeometry/textRenderMetrics";
+import { blockInterLineExtentDots } from "../lib/zebraTextLayout";
+import type { LabelObject } from "../types/Group";
+
+/** Emit `^FT` or `^FO` depending on how the object was originally positioned. */
+export function fieldPos(obj: LabelObjectBase): string {
+  const cmd = obj.positionType === "FT" ? "FT" : "FO";
+  return `^${cmd}${obj.x},${obj.y}`;
+}
+
+/** Graphic leaf types whose ^FO/^FT origin comes from {@link graphicAnchor}
+ *  (the footprint top-left under ^FO, a bottom corner under ^FT). For box /
+ *  ellipse / image the model x/y already is that top-left; a line's x/y is an
+ *  endpoint, so its emitted origin is the bbox top-left instead. Single source
+ *  shared by the generator's home-shift drop test and the preflight off-label
+ *  check, so the two can't disagree on which types anchor this way. */
+export const GRAPHIC_ANCHOR_TYPES: ReadonlySet<string> = new Set([
+  "box",
+  "ellipse",
+  "image",
+  "line",
+]);
+
+/** Emitted ^FO/^FT origin coords for a graphic of footprint w x h at top-left
+ *  (x, y). `^FO` emits the top-left verbatim; `^FT` anchors a bottom corner
+ *  (spec p.205): bottom-left, or bottom-right when right-justified. The numeric
+ *  half of {@link graphicAnchor}, also reused by the preflight off-label check
+ *  so what it tests can't drift from what the generator emits. */
+export function graphicAnchorCoords(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  positionType: LabelObjectBase["positionType"],
+  justify: "L" | "R" | undefined,
+): { x: number; y: number } {
+  if (positionType !== "FT") return { x, y };
+  return justify === "R" ? { x: x + w, y: y + h } : { x, y: y + h };
+}
+
+/** Anchor command for a graphic of footprint w x h at top-left (x, y). Shared by
+ *  every graphic emitter (box/ellipse/image, and the diagonal-line bounding box). */
+export function graphicAnchor(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  positionType: LabelObjectBase["positionType"],
+  justify: "L" | "R" | undefined,
+): string {
+  const a = graphicAnchorCoords(x, y, w, h, positionType, justify);
+  if (positionType !== "FT") return `^FO${a.x},${a.y}`;
+  return justify === "R" ? `^FT${a.x},${a.y},1` : `^FT${a.x},${a.y}`;
+}
+
+/** {@link graphicAnchor} for an object whose `x`/`y` is the footprint top-left. */
+export function graphicFieldPos(obj: LabelObjectBase, w: number, h: number): string {
+  return graphicAnchor(obj.x, obj.y, w, h, obj.positionType, obj.fieldJustify);
+}
+
+/** Symmetric with parser's ^LR state flip at ^LRN. */
+export function wrapReverse(reverse: boolean | undefined, body: string): string {
+  return reverse ? `^LRY${body}^LRN` : body;
+}
+
+interface TextLikeObjForFieldPos extends LabelObjectBase {
+  props: {
+    fontHeight: number;
+    rotation: "N" | "R" | "I" | "B";
+    blockWidth?: number;
+    blockLines?: number;
+    blockLineSpacing?: number;
+    textMode?: "normal" | "fb" | "tb";
+    blockHeight?: number;
+  };
+}
+
+/** Vertical extent of a block beyond its first line, in dots. Shifts the
+ *  FT baseline / FO-R/I anchor. ^TB is a fixed clip height; ^FB stacks lines. */
+function blockExtentFor(p: TextLikeObjForFieldPos["props"]): number {
+  if (p.textMode === "tb") {
+    return Math.max(0, (p.blockHeight ?? p.fontHeight) - p.fontHeight);
+  }
+  return blockInterLineExtentDots({
+    blockWidthDots: p.blockWidth ?? 0,
+    blockLines: p.blockLines ?? 1,
+    blockLineSpacing: p.blockLineSpacing ?? 0,
+    fontHeight: p.fontHeight,
+  });
+}
+
+/** Priority: fontId -> printerFontName -> ctx defaultFontId -> ^A0. */
+export function resolveFontCmd(
+  props: {
+    rotation: "N" | "R" | "I" | "B";
+    fontHeight: number;
+    fontWidth: number;
+    fontId?: string;
+    printerFontName?: string;
+  },
+  ctx?: ZplEmitContext,
+): string {
+  const { rotation, fontHeight, fontWidth, fontId, printerFontName } = props;
+  if (fontId) {
+    return `^A${fontId}${rotation},${fontHeight},${fontWidth}`;
+  }
+  if (printerFontName) {
+    return `^A@${rotation},${fontHeight},${fontWidth},E:${printerFontName}`;
+  }
+  const defaultId = ctx?.label.defaultFontId;
+  if (defaultId) {
+    return `^A${defaultId}${rotation},${fontHeight},${fontWidth}`;
+  }
+  return `^A0${rotation},${fontHeight},${fontWidth}`;
+}
+
+/** Numeric ZPL anchor (cap-top/baseline) for a text-like field. */
+export function textZplAnchorCoords(obj: TextLikeObjForFieldPos): {
+  cmd: "FO" | "FT";
+  x: number;
+  y: number;
+} {
+  const cmd = obj.positionType === "FT" ? "FT" : "FO";
+  const metrics = getTextRenderMetrics(obj as unknown as LabelObject);
+  const p = obj.props;
+  const blockExtentDots = blockExtentFor(p);
+  const a = modelToZplAnchor(
+    obj.x,
+    obj.y,
+    obj.props,
+    obj.positionType,
+    metrics?.inkWidthDots ?? 0,
+    blockExtentDots,
+    p.blockWidth ?? 0,
+  );
+  // ^FO/^FT take integers; firmware would truncate fractional residue anyway.
+  return { cmd, x: Math.round(a.x), y: Math.round(a.y) };
+}
+
+/** Converts EM top-left model coord to ZPL anchor (cap-top/baseline). */
+export function textFieldPos(obj: TextLikeObjForFieldPos): string {
+  const a = textZplAnchorCoords(obj);
+  return `^${a.cmd}${a.x},${a.y}`;
+}
+
+/** ^FX has no ^FH escape; strip ^/~ to prevent surrounding-command termination. */
+export function stripZplCommandChars(s: string): string {
+  return s.replace(/[\^~]/g, "");
+}
+
+const FH_DELIM = "_";
+// C0 control bytes re-escape too: an imported ^FH field (decoded to raw bytes
+// in content) or a control-key chip would otherwise re-emit unescaped.
+// eslint-disable-next-line no-control-regex
+const NEEDS_FH = /[\^~\x00-\x1F]/;
+// eslint-disable-next-line no-control-regex
+const FH_ESCAPE = /[\^~_\x00-\x1F]/g;
+
+function hex(ch: string): string {
+  return (
+    FH_DELIM + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")
+  );
+}
+
+/** Hex-escape ^/~ and control bytes via ^FH_ (and _ itself) so user content
+ *  can't smuggle commands and nonprintables survive re-emit. `arm` carries
+ *  per-field ^FC/^FE armings; it sits after a ^FH but flush against ^FD,
+ *  because ^FE only applies when it immediately precedes its ^FD (spec p.191). */
+export function fdField(payload: string, arm = ''): string {
+  if (!NEEDS_FH.test(payload)) return `${arm}^FD${payload}^FS`;
+  const escaped = payload.replace(FH_ESCAPE, hex);
+  return `^FH${FH_DELIM}${arm}^FD${escaped}^FS`;
+}
+
+/** Single-bind content (`«name»`) emits `^FN{n}` + default; a template expands
+ *  to `^FE` embeds, everything else stays literal. `transform` (e.g. GS1 FNC1
+ *  escaping) is applied to the final field-data payload so it composes with
+ *  binding instead of bypassing it. `encodeDefault` block-encodes only the
+ *  bound default (e.g. ^TB `<<>` escaping); literal/template `content` must
+ *  already be encoded by the caller, since encoding after marker substitution
+ *  would corrupt the inserted ^FE/^FC tokens. */
+export function fdFieldFor(
+  content: string,
+  ctx?: ZplEmitContext,
+  transform: (payload: string) => string = (s) => s,
+  encodeDefault: (payload: string) => string = (s) => s,
+  /** Opt-in per emitter: only `controlChars`-capable types may turn chips into
+   *  raw bytes; everywhere else a leftover chip stays literal marker text,
+   *  like any other unresolved marker. */
+  resolveCtrl = false,
+): string {
+  // Single-bind emits the variable's ^FN + default literally (never expanding a
+  // marker inside the mirrored default), so preview and export agree. Derived
+  // from content: content == exactly one known marker.
+  if (ctx?.variables) {
+    const cls = classifyField(content, ctx.variables);
+    if (cls.kind === "single") {
+      const v = cls.variable;
+      return `^FN${v.fnNumber}${fdField(transform(encodeDefault(v.defaultValue)))}`;
+    }
+  }
+  // Template path: arm ^FE/^FC on this field (absent ctx delim = templates not
+  // emittable, so content stays literal). Firmware scopes both armings to the
+  // ^FD they precede, even for default chars (spec p.189/191; ZD230-verified:
+  // without them embeds and clock tokens print literally).
+  let payload = content;
+  let arm = '';
+  if (ctx?.variables && ctx.embedChar && hasTemplateMarkers(payload)) {
+    // Arm ^FE only when a marker actually became an embed: hasTemplateMarkers
+    // also matches non-variable «...» spans (e.g. clock markers), which
+    // markersToEmbeds leaves untouched.
+    const { payload: next, referencedFnNumbers } = markersToEmbeds(payload, ctx.variables, ctx.embedChar);
+    if (referencedFnNumbers.size > 0) arm = `^FE${ctx.embedChar}`;
+    payload = next;
+  }
+  if (ctx?.clockChars && hasClockMarkers(payload)) {
+    payload = markersToTokens(payload, ctx.clockChars);
+    arm = `^FC${ctx.clockChars.date},${ctx.clockChars.time},${ctx.clockChars.tertiary}${arm}`;
+  }
+  // Control-key chips become their raw byte; fdField hex-escapes it via ^FH.
+  if (resolveCtrl && hasControlMarkers(payload)) payload = resolveControlMarkers(payload);
+  return fdField(transform(payload), arm);
+}

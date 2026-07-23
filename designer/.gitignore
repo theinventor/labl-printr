@@ -1,0 +1,59 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+*.local.*
+
+# Environment variables
+.env
+.env.*
+
+# Test coverage
+coverage/
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Test output
+tests/fixtures/__diffs__/
+tests/fixtures/__shape_diffs__/
+tests/fixtures/__text_diffs__/
+
+# Local scratch (font subsets, Labelary validation outputs, etc.)
+tmp/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+.claude/
+.windsurf/
+.cursor/
+.zed/
+.continue/
+.clinerules/
+.clinerules
+.roo/
+.roorules-*
+.rooignore
+.aider.conf.yml
+*.instructions.*
+
+CLAUDE.md
+*.tar.gz

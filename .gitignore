@@ -1,5 +1,4 @@
 node_modules/
-dist/
 build/
 *.log
 .DS_Store
@@ -7,3 +6,11 @@ build/
 __pycache__/
 *.pyc
 .venv/
+.gstack/
+bin/
+data/
+web/dist/
+designer/dist/
+internal/templates/testdata/out/
+internal/labels/testdata/out/
+*.tsbuildinfo
