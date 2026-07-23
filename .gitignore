@@ -13,3 +13,4 @@ web/dist/
 designer/dist/
 internal/templates/testdata/out/
 internal/labels/testdata/out/
+*.tsbuildinfo
