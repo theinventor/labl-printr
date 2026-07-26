@@ -24,6 +24,8 @@ Self-hosted label printing for network Zebra printers. Pick a template in the we
 
 Labels are variable-length: an auto-trim pass renders each label, measures where the ink ends, and cuts `^LL` to fit.
 
+**Handwriting fonts.** Large Print, Small Print, and Packing take a font picker — a "Printer default" face plus five bundled handwriting faces (Permanent Marker, Patrick Hand, Kalam, Gochi Hand, Indie Flower, Architects Daughter). Text is rasterized server-side from real TTFs into the label bitmap and embedded as a ZPL `^GF` graphic, so any font works and the preview is the exact pixels that print. From the CLI it's just `--var font=marker`. See [internal/fonts/FONTS.md](internal/fonts/FONTS.md) for licenses.
+
 ## Quick start
 
 ```sh

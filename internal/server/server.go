@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/theinventor/labl-printr/internal/fonts"
 	"github.com/theinventor/labl-printr/internal/jobs"
 	"github.com/theinventor/labl-printr/internal/labels"
 	"github.com/theinventor/labl-printr/internal/printer"
@@ -52,6 +53,8 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api", func(api chi.Router) {
+		api.Get("/fonts", s.listFonts)
+		api.Get("/fonts/{id}.ttf", s.fontFile)
 		api.Get("/templates", s.listTemplates)
 		api.Get("/templates/{id}", s.getTemplate)
 		api.Delete("/templates/{id}", s.deleteTemplate)
@@ -148,6 +151,21 @@ type templateJSON struct {
 
 func toJSON(t *templates.Template) templateJSON {
 	return templateJSON{ID: t.ID, Name: t.Name, Description: t.Description, Fields: t.Fields, Builtin: t.Builtin}
+}
+
+func (s *Server) listFonts(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, fonts.List())
+}
+
+func (s *Server) fontFile(w http.ResponseWriter, r *http.Request) {
+	data := fonts.TTF(chi.URLParam(r, "id"))
+	if data == nil {
+		writeErr(w, 404, "no such font")
+		return
+	}
+	w.Header().Set("Content-Type", "font/ttf")
+	w.Header().Set("Cache-Control", "max-age=604800")
+	_, _ = w.Write(data)
 }
 
 func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {

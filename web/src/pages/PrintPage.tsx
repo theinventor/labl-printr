@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Preview, type Printer, type Template } from '../api';
 import { Field, Spinner, inputCls, useToast } from '../ui';
+import { FontPicker } from '../FontPicker';
 
 const templateIcons: Record<string, string> = {
   inventory: 'M4 5h9v4H4zM4 11h6v1.5H4zM4 14h6v1.5H4zM15 5h5v5h-5zM15 12h5v1.5h-5z',
@@ -205,8 +206,13 @@ export function PrintPage() {
         </h2>
         <div className="space-y-4 rounded-xl border border-edge bg-panel p-5">
           {template?.fields.map((f) => (
-            <Field key={f.key} label={f.label} hint={f.required ? undefined : 'optional'}>
-              {f.type === 'textarea' ? (
+            <Field key={f.key} label={f.label} hint={f.required || f.type === 'font' ? undefined : 'optional'}>
+              {f.type === 'font' ? (
+                <FontPicker
+                  value={vars[f.key] ?? f.default ?? 'system'}
+                  onChange={(id) => setVar(f.key, id)}
+                />
+              ) : f.type === 'textarea' ? (
                 <textarea
                   className={`${inputCls} min-h-24 resize-y`}
                   placeholder={f.placeholder}

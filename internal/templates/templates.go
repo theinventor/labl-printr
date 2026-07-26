@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/theinventor/labl-printr/internal/fonts"
 	"github.com/theinventor/labl-printr/internal/zpl"
 )
 
@@ -25,9 +26,92 @@ var DefaultProfile = Profile{Dpmm: 8, WidthDots: 487, LeftShift: 0}
 type Field struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Type        string `json:"type"` // text | textarea | url
+	Type        string `json:"type"` // text | textarea | url | font
 	Required    bool   `json:"required"`
 	Placeholder string `json:"placeholder"`
+	Default     string `json:"default,omitempty"`
+}
+
+// fontField is the shared font-picker field for text templates.
+func fontField() Field {
+	return Field{Key: "font", Label: "Font", Type: "font", Default: "system"}
+}
+
+// blockOpts configures a text block that renders either as native ZPL (system
+// font) or as a rasterized bitmap graphic (bundled TTF faces).
+type blockOpts struct {
+	x, y     int
+	width    int
+	maxLines int
+	minPx    int
+	maxPx    int
+	lineGap  int
+	align    fonts.Align
+	upper    bool
+}
+
+// renderBlock draws text at font face `faceID` and returns the ZPL fragment
+// plus the vertical space it consumed. For the system face it falls back to
+// native ^A0 autosizing; for bundled faces it rasterizes a fitted bitmap so
+// preview and print are the exact same pixels.
+func renderBlock(faceID, text string, o blockOpts) (frag string, consumed int, err error) {
+	if o.upper {
+		text = strings.ToUpper(text)
+	}
+	face := fonts.Get(faceID)
+	if !face.IsBitmap() {
+		h := zpl.FitFontHeight(text, o.width, o.minPx, o.maxPx)
+		lines := min(zpl.EstLines(text, h, o.width), o.maxLines)
+		just := zpl.JustifyLeft
+		switch o.align {
+		case fonts.AlignCenter:
+			just = zpl.JustifyCenter
+		case fonts.AlignRight:
+			just = zpl.JustifyRight
+		}
+		var l strings.Builder
+		l.WriteString(nativeBlock(o.x, o.y, h, o.width, lines, o.lineGap, just, text))
+		return l.String(), lines * (h + o.lineGap), nil
+	}
+	bm, err := face.FitAndRender(text, o.width, o.maxLines, o.minPx, o.maxPx, o.lineGap, o.align)
+	if err != nil {
+		return "", 0, err
+	}
+	return bm.ToZPLGraphic(o.x, o.y), bm.Height, nil
+}
+
+// nativeBlock emits a native ^FB text block (mirrors zpl.Label.TextBlock but
+// as a standalone fragment so renderBlock can compose it).
+func nativeBlock(x, y, fontHeight, width, maxLines, lineGap int, justify, text string) string {
+	r := strings.NewReplacer("^", " ", "~", " ", "\\", "/")
+	return fmt.Sprintf("^FO%d,%d^A0N,%d,0^FB%d,%d,%d,%s,0^FD%s^FS\n",
+		x, y, fontHeight, width, maxLines, lineGap, justify, r.Replace(text))
+}
+
+// renderBanner draws a single line of centered white-on-black text (the
+// packing ROOM banner). Returns the fragment and the total bar height.
+func renderBanner(faceID, text string, x, y, width, minPx, maxPx int) (frag string, barH int, err error) {
+	text = strings.ToUpper(strings.TrimSpace(text))
+	face := fonts.Get(faceID)
+	if !face.IsBitmap() {
+		h := zpl.FitFontHeight(text, width-2*margin, minPx, maxPx)
+		barH = h + 28
+		textY := y + (barH-h)/2
+		safe := strings.NewReplacer("^", " ", "~", " ", "\\", "/").Replace(text)
+		frag = fmt.Sprintf("^FO%d,%d^GB%d,%d,%d,B,0^FS\n", x, y, width, barH, barH)
+		frag += fmt.Sprintf("^FO%d,%d^A0N,%d,0^FB%d,1,0,C,0^FR^FD%s^FS\n", x, textY, h, width, safe)
+		return frag, barH, nil
+	}
+	bm, err := face.FitAndRender(text, width-2*margin, 1, minPx, maxPx, 0, fonts.AlignCenter)
+	if err != nil {
+		return "", 0, err
+	}
+	barH = bm.Height + 28
+	gy := y + (barH-bm.Height)/2
+	gx := x + (width-bm.Width)/2
+	frag = fmt.Sprintf("^FO%d,%d^GB%d,%d,%d,B,0^FS\n", x, y, width, barH, barH)
+	frag += "^FR" + bm.ToZPLGraphic(gx, gy)
+	return frag, barH, nil
 }
 
 // Rendered is the output of a template render.
@@ -153,16 +237,21 @@ func largePrintTemplate() *Template {
 		Builtin:     true,
 		Fields: []Field{
 			{Key: "text", Label: "Text", Type: "textarea", Required: true, Placeholder: "FRAGILE"},
+			fontField(),
 		},
 		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
 			w := p.WidthDots - margin*2
 			text := strings.TrimSpace(vars["text"])
-			h := zpl.FitFontHeight(text, w, 40, 150)
-			lines := zpl.EstLines(text, h, w)
-			lineGap := h / 8
-			length := margin*2 + lines*(h+lineGap)
+			frag, consumed, err := renderBlock(vars["font"], text, blockOpts{
+				x: margin, y: margin, width: w, maxLines: 3, minPx: 40, maxPx: 150,
+				lineGap: 14, align: fonts.AlignCenter,
+			})
+			if err != nil {
+				return Rendered{}, err
+			}
+			length := margin*2 + consumed
 			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
-			l.TextBlock(margin, margin, h, w, lines, lineGap, zpl.JustifyCenter, text)
+			l.Raw(frag)
 			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
 		},
 	}
@@ -178,15 +267,21 @@ func smallPrintTemplate() *Template {
 		Builtin:     true,
 		Fields: []Field{
 			{Key: "text", Label: "Text", Type: "textarea", Required: true, Placeholder: "HDMI — office TV"},
+			fontField(),
 		},
 		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
 			w := p.WidthDots - margin*2
 			text := strings.TrimSpace(vars["text"])
-			h := 28
-			lines := min(zpl.EstLines(text, h, w), 8)
-			length := margin*2 + lines*(h+6)
+			frag, consumed, err := renderBlock(vars["font"], text, blockOpts{
+				x: margin, y: margin, width: w, maxLines: 8, minPx: 26, maxPx: 40,
+				lineGap: 6, align: fonts.AlignLeft,
+			})
+			if err != nil {
+				return Rendered{}, err
+			}
+			length := margin*2 + consumed
 			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
-			l.TextBlock(margin, margin, h, w, lines, 6, zpl.JustifyLeft, text)
+			l.Raw(frag)
 			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
 		},
 	}
@@ -203,35 +298,46 @@ func packingTemplate() *Template {
 		Fields: []Field{
 			{Key: "room", Label: "Room", Type: "text", Required: true, Placeholder: "KITCHEN"},
 			{Key: "contents", Label: "Contents", Type: "textarea", Required: true, Placeholder: "Pots and pans\nCutting boards\nKnife block"},
+			fontField(),
 		},
 		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
 			w := p.WidthDots - margin*2
-			room := strings.ToUpper(strings.TrimSpace(vars["room"]))
-			roomH := zpl.FitFontHeight(room, w-2*margin, 36, 80)
-			barH := roomH + 28
+			face := vars["font"]
 
-			itemH := 28
+			banner, barH, err := renderBanner(face, vars["room"], margin, margin, w, 36, 80)
+			if err != nil {
+				return Rendered{}, err
+			}
+
 			var items []string
 			for _, line := range strings.Split(vars["contents"], "\n") {
 				if s := strings.TrimSpace(line); s != "" {
 					items = append(items, s)
 				}
 			}
-			itemLines := 0
+
+			// Render each contents line first so bitmap fonts contribute their
+			// true height to the label length.
+			y := margin + barH + 14
+			var body strings.Builder
+			bulletH := 28
 			for _, it := range items {
-				itemLines += min(zpl.EstLines(it, itemH, w-30), 2)
+				body.WriteString(fmt.Sprintf("^FO%d,%d^A0N,%d,0^FD-^FS\n", margin, y+2, bulletH))
+				frag, consumed, err := renderBlock(face, it, blockOpts{
+					x: margin + 30, y: y, width: w - 30, maxLines: 2,
+					minPx: 24, maxPx: 32, lineGap: 8, align: fonts.AlignLeft,
+				})
+				if err != nil {
+					return Rendered{}, err
+				}
+				body.WriteString(frag)
+				y += consumed + 8
 			}
 
-			length := margin + barH + 14 + itemLines*(itemH+8) + margin
+			length := y + margin
 			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
-			l.InverseText(margin, margin, w, barH, roomH, room)
-			y := margin + barH + 14
-			for _, it := range items {
-				lines := min(zpl.EstLines(it, itemH, w-30), 2)
-				l.Text(margin, y+2, itemH, "-")
-				l.TextBlock(margin+30, y, itemH, w-30, lines, 8, zpl.JustifyLeft, it)
-				y += lines*(itemH+8)
-			}
+			l.Raw(banner)
+			l.Raw(body.String())
 			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
 		},
 	}

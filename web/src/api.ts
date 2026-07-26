@@ -1,9 +1,16 @@
 export type Field = {
   key: string;
   label: string;
-  type: 'text' | 'textarea' | 'url';
+  type: 'text' | 'textarea' | 'url' | 'font';
   required?: boolean;
   placeholder?: string;
+  default?: string;
+};
+
+export type FontFace = {
+  id: string;
+  name: string;
+  style: 'handwriting' | 'system';
 };
 
 export type Template = {
@@ -77,6 +84,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  fonts: () => request<FontFace[]>('GET', '/api/fonts'),
   templates: () => request<Template[]>('GET', '/api/templates'),
   deleteTemplate: (id: string) => request<unknown>('DELETE', `/api/templates/${id}`),
   preview: (body: { templateId: string; vars: Record<string, string>; printerId?: number }) =>
