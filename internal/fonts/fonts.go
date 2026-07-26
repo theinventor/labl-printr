@@ -179,11 +179,21 @@ const (
 	AlignRight
 )
 
+// Hard bounds on rasterized text, mirroring the label geometry clamps. These
+// stop untrusted text (a giant paste, thousands of newlines, a hostile printer
+// widthDots) from forcing a multi-gigabyte image allocation.
+const (
+	maxBitmapWidth  = 4000
+	maxBitmapHeight = 16000
+	maxRenderLines  = 200
+)
+
 // RenderOptions configures a text render.
 type RenderOptions struct {
 	Text     string
 	SizePx   float64 // cap-ish pixel height driving the font size
 	MaxWidth int     // wrap width in dots; also the bitmap width
+	MaxLines int     // hard cap on lines drawn (0 = maxRenderLines)
 	Align    Align
 	LineGap  int // extra dots between wrapped lines
 }
@@ -200,9 +210,20 @@ func (f *Face) Render(opts RenderOptions) (*Bitmap, error) {
 	if opts.MaxWidth <= 0 {
 		return nil, fmt.Errorf("MaxWidth must be positive")
 	}
+	if opts.MaxWidth > maxBitmapWidth {
+		return nil, fmt.Errorf("text width %d exceeds bound %d", opts.MaxWidth, maxBitmapWidth)
+	}
 	lines, err := f.wrap(opts.Text, opts.SizePx, opts.MaxWidth)
 	if err != nil {
 		return nil, err
+	}
+	// Cap line count so a hostile paste can't blow up the image height.
+	lineCap := opts.MaxLines
+	if lineCap <= 0 || lineCap > maxRenderLines {
+		lineCap = maxRenderLines
+	}
+	if len(lines) > lineCap {
+		lines = lines[:lineCap]
 	}
 
 	face, err := opentype.NewFace(f.loaded, &opentype.FaceOptions{Size: opts.SizePx, DPI: 72, Hinting: font.HintingFull})
@@ -218,6 +239,9 @@ func (f *Face) Render(opts RenderOptions) (*Bitmap, error) {
 	height := len(lines)*lineHeight + (len(lines)-1)*opts.LineGap
 	if height < 1 {
 		height = 1
+	}
+	if height > maxBitmapHeight {
+		return nil, fmt.Errorf("text height %d exceeds bound %d", height, maxBitmapHeight)
 	}
 	// Render onto a grayscale image, then threshold to 1-bit. A real
 	// grayscale intermediate keeps anti-aliased edges crisp before the
@@ -301,7 +325,7 @@ func (f *Face) FitAndRender(text string, maxWidth, maxLines, minPx, maxPx, lineG
 		}
 		size -= 2
 	}
-	return f.Render(RenderOptions{Text: text, SizePx: float64(size), MaxWidth: maxWidth, Align: align, LineGap: lineGap})
+	return f.Render(RenderOptions{Text: text, SizePx: float64(size), MaxWidth: maxWidth, MaxLines: maxLines, Align: align, LineGap: lineGap})
 }
 
 // FaceIDs returns the registry ids in order (for tests/validation).

@@ -80,6 +80,53 @@ func TestRenderThroughZebrash(t *testing.T) {
 	}
 }
 
+// A hostile paste must not allocate an unbounded bitmap.
+func TestRenderBoundsHostileInput(t *testing.T) {
+	f := Get("marker")
+	huge := strings.Repeat("line\n", 5000)
+	bm, err := f.Render(RenderOptions{Text: huge, SizePx: 40, MaxWidth: 455, Align: AlignLeft})
+	if err != nil {
+		t.Fatalf("bounded render should succeed by truncating, got %v", err)
+	}
+	if bm.Height > maxBitmapHeight {
+		t.Fatalf("bitmap height %d exceeded bound %d", bm.Height, maxBitmapHeight)
+	}
+	if _, err := f.Render(RenderOptions{Text: "x", SizePx: 40, MaxWidth: 99999, Align: AlignLeft}); err == nil {
+		t.Fatal("expected width-bound rejection")
+	}
+}
+
+// The reverse graphic must emit ^FR inside the field (after ^FO), the order
+// Zebra firmware expects.
+func TestReverseGraphicOrder(t *testing.T) {
+	f := Get("marker")
+	bm, err := f.Render(RenderOptions{Text: "X", SizePx: 40, MaxWidth: 200, Align: AlignCenter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := bm.ToZPLGraphicReverse(10, 10)
+	if !strings.HasPrefix(rev, "^FO10,10^FR^GFA,") {
+		t.Fatalf("reverse graphic has wrong field order: %.30s", rev)
+	}
+	if strings.Contains(bm.ToZPLGraphic(10, 10), "^FR") {
+		t.Fatal("non-reverse graphic should not contain ^FR")
+	}
+}
+
+// Degenerate text must not panic or produce a zero-dimension bitmap.
+func TestRenderDegenerateText(t *testing.T) {
+	f := Get("marker")
+	for _, txt := range []string{"", "   ", "\n\n\n", "\t"} {
+		bm, err := f.Render(RenderOptions{Text: txt, SizePx: 40, MaxWidth: 455, Align: AlignLeft})
+		if err != nil {
+			t.Fatalf("text %q: %v", txt, err)
+		}
+		if bm.Width < 1 || bm.Height < 1 {
+			t.Fatalf("text %q gave %dx%d", txt, bm.Width, bm.Height)
+		}
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

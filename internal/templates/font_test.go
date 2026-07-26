@@ -45,6 +45,20 @@ func TestFontTemplates(t *testing.T) {
 	}
 }
 
+// A multi-megabyte field value must be capped before any renderer walks it,
+// so a hostile paste can't pin a CPU in the autosize loop.
+func TestFieldLengthCapped(t *testing.T) {
+	tpl, _ := Get("large-print")
+	huge := strings.Repeat("A", 5_000_000)
+	r, err := tpl.Render(map[string]string{"text": huge, "font": "marker"}, DefaultProfile, 1)
+	if err != nil {
+		t.Fatalf("render should succeed on capped input: %v", err)
+	}
+	if r.LengthDots > 4000 {
+		t.Fatalf("capped input still produced an oversized label: %d dots", r.LengthDots)
+	}
+}
+
 // TestSystemFontStaysNative confirms the default face still emits native ZPL
 // text (no bitmap), preserving the crisp resident-font look and small payloads.
 func TestSystemFontStaysNative(t *testing.T) {

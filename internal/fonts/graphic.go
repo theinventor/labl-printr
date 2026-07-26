@@ -6,16 +6,29 @@ import (
 )
 
 // ToZPLGraphic encodes a Bitmap as a ^GFA hex graphic field placed at x,y.
-// ^GFA takes: compression 'A' (ASCII hex), total bytes, total bytes, bytes
-// per row, then the hex bitmap data. Bit 1 = black dot. Rows are padded to a
-// whole number of bytes, MSB first — the standard ZPL graphic layout that
-// zebrash and real Zebra printers both render.
-func (b *Bitmap) ToZPLGraphic(x, y int) string {
+func (b *Bitmap) ToZPLGraphic(x, y int) string { return b.zplGraphic(x, y, false) }
+
+// ToZPLGraphicReverse is ToZPLGraphic with ^FR (field reverse) applied, so the
+// graphic prints white where its dots are set — used to knock text out of a
+// black bar. ^FR is placed after ^FO, inside the field, which is the order
+// Zebra firmware expects (some firmware is order-sensitive).
+func (b *Bitmap) ToZPLGraphicReverse(x, y int) string { return b.zplGraphic(x, y, true) }
+
+// zplGraphic emits the ^GFA hex graphic field. ^GFA takes: compression 'A'
+// (ASCII hex), total bytes, total bytes, bytes per row, then the hex bitmap
+// data. Bit 1 = black dot. Rows are padded to a whole number of bytes, MSB
+// first — the standard ZPL graphic layout both zebrash and real Zebra
+// printers render.
+func (b *Bitmap) zplGraphic(x, y int, reverse bool) string {
 	bytesPerRow := (b.Width + 7) / 8
 	total := bytesPerRow * b.Height
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "^FO%d,%d^GFA,%d,%d,%d,", x, y, total, total, bytesPerRow)
+	fmt.Fprintf(&sb, "^FO%d,%d", x, y)
+	if reverse {
+		sb.WriteString("^FR")
+	}
+	fmt.Fprintf(&sb, "^GFA,%d,%d,%d,", total, total, bytesPerRow)
 	const hexDigits = "0123456789ABCDEF"
 	for yy := 0; yy < b.Height; yy++ {
 		for bx := 0; bx < bytesPerRow; bx++ {

@@ -110,7 +110,7 @@ func renderBanner(faceID, text string, x, y, width, minPx, maxPx int) (frag stri
 	gy := y + (barH-bm.Height)/2
 	gx := x + (width-bm.Width)/2
 	frag = fmt.Sprintf("^FO%d,%d^GB%d,%d,%d,B,0^FS\n", x, y, width, barH, barH)
-	frag += "^FR" + bm.ToZPLGraphic(gx, gy)
+	frag += bm.ToZPLGraphicReverse(gx, gy)
 	return frag, barH, nil
 }
 
@@ -130,8 +130,28 @@ type Template struct {
 	render      func(vars map[string]string, p Profile, copies int) (Rendered, error)
 }
 
+// maxFieldRunes bounds any single field value. Nothing longer is physically
+// printable within the label's dot bounds, and capping here — before any
+// renderer measures the string — stops a multi-megabyte value from pinning a
+// core in the O(n) font autosize loop (the ^FB native path and the TTF raster
+// path both walk the whole string). One cap covers preview, jobs, and CLI.
+const maxFieldRunes = 2000
+
 // Render produces final ZPL for the given variables and printer profile.
 func (t *Template) Render(vars map[string]string, p Profile, copies int) (Rendered, error) {
+	// Copy and cap field values so we never mutate the caller's map and never
+	// hand an unbounded string to a renderer.
+	capped := make(map[string]string, len(vars))
+	for k, v := range vars {
+		// A value with <= maxFieldRunes bytes can't exceed maxFieldRunes runes,
+		// so skip the O(n) rune conversion for the common case.
+		if len(v) > maxFieldRunes {
+			v = truncateRunes(v, maxFieldRunes)
+		}
+		capped[k] = v
+	}
+	vars = capped
+
 	for _, f := range t.Fields {
 		if f.Required && strings.TrimSpace(vars[f.Key]) == "" {
 			return Rendered{}, fmt.Errorf("missing required field %q", f.Key)
@@ -144,6 +164,16 @@ func (t *Template) Render(vars map[string]string, p Profile, copies int) (Render
 		copies = 1
 	}
 	return t.render(vars, p, copies)
+}
+
+// truncateRunes returns the first n runes of s (rune-safe, never splits a
+// multibyte character).
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // Builtins returns the four v1 templates.
@@ -242,8 +272,11 @@ func largePrintTemplate() *Template {
 		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
 			w := p.WidthDots - margin*2
 			text := strings.TrimSpace(vars["text"])
+			// maxLines bounds allocation but is generous enough that realistic
+			// "large print" messages (FRAGILE, THIS SIDE UP, a short address)
+			// never lose their tail; the preview shows exactly what prints.
 			frag, consumed, err := renderBlock(vars["font"], text, blockOpts{
-				x: margin, y: margin, width: w, maxLines: 3, minPx: 40, maxPx: 150,
+				x: margin, y: margin, width: w, maxLines: 8, minPx: 40, maxPx: 150,
 				lineGap: 14, align: fonts.AlignCenter,
 			})
 			if err != nil {
@@ -314,6 +347,12 @@ func packingTemplate() *Template {
 				if s := strings.TrimSpace(line); s != "" {
 					items = append(items, s)
 				}
+			}
+			// A packing label with hundreds of lines isn't a real label; cap
+			// it so a hostile paste can't emit thousands of ^GF graphics.
+			const maxItems = 40
+			if len(items) > maxItems {
+				items = items[:maxItems]
 			}
 
 			// Render each contents line first so bitmap fonts contribute their

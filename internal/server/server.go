@@ -444,6 +444,12 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 			p.WidthDots = 720
 		}
 	}
+	// A hostile widthDots flows straight into raster allocation for bitmap
+	// fonts, ahead of the render-time canvas guard — clamp it at the source.
+	if p.WidthDots > labels.MaxWidthDots {
+		writeErr(w, 422, "widthDots %d exceeds the maximum %d", p.WidthDots, labels.MaxWidthDots)
+		return
+	}
 	if p.LeftShift == 0 && p.Kind == store.KindNetwork {
 		p.LeftShift = 172
 		if p.Dpmm == 12 {
