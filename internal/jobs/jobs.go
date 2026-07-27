@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/theinventor/labl-printr/internal/brother"
+	"github.com/theinventor/labl-printr/internal/oopsie"
 	"github.com/theinventor/labl-printr/internal/printer"
 	"github.com/theinventor/labl-printr/internal/render"
 	"github.com/theinventor/labl-printr/internal/store"
@@ -106,6 +107,9 @@ func (m *Manager) run(printerID, jobID int64) {
 	}
 	if sendErr != nil {
 		m.setState(jobID, store.JobFailed, sendErr.Error())
+		oopsie.Report("job_failed", sendErr.Error(), nil, map[string]any{
+			"jobId": jobID, "printer": p.Name, "kind": p.Kind, "template": j.TemplateID,
+		})
 		return
 	}
 	m.setState(jobID, store.JobDone, "")
