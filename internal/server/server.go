@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/theinventor/labl-printr/internal/fonts"
 	"github.com/theinventor/labl-printr/internal/jobs"
 	"github.com/theinventor/labl-printr/internal/labels"
+	"github.com/theinventor/labl-printr/internal/oopsie"
 	"github.com/theinventor/labl-printr/internal/printer"
 	"github.com/theinventor/labl-printr/internal/render"
 	"github.com/theinventor/labl-printr/internal/store"
@@ -44,6 +46,7 @@ type Server struct {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(reportPanics)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -55,6 +58,7 @@ func (s *Server) Router() http.Handler {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/fonts", s.listFonts)
 		api.Get("/fonts/{id}.ttf", s.fontFile)
+		api.Post("/client-error", s.clientError)
 		api.Get("/templates", s.listTemplates)
 		api.Get("/templates/{id}", s.getTemplate)
 		api.Delete("/templates/{id}", s.deleteTemplate)
@@ -155,6 +159,58 @@ func toJSON(t *templates.Template) templateJSON {
 
 func (s *Server) listFonts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, fonts.List())
+}
+
+// reportPanics forwards handler panics to Oopsie, then re-panics so chi's
+// Recoverer still writes the 500. Runs inside Recoverer.
+func reportPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				oopsie.Report("panic", fmt.Sprint(rec), stackFrames(),
+					map[string]any{"request": map[string]string{"url": r.URL.Path, "method": r.Method}})
+				panic(rec)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func stackFrames() []string {
+	buf := make([]byte, 4096)
+	n := runtime.Stack(buf, false)
+	var frames []string
+	for _, line := range strings.Split(string(buf[:n]), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			frames = append(frames, line)
+		}
+	}
+	return frames
+}
+
+// clientError ingests an error reported by the web UI and forwards it to
+// Oopsie, so browser failures (like a missing crypto.randomUUID over plain
+// http) are visible instead of dying silently in the tab.
+func (s *Server) clientError(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Message string   `json:"message"`
+		Stack   []string `json:"stack"`
+		URL     string   `json:"url"`
+		Extra   any      `json:"extra"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad json: %v", err)
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		writeErr(w, 422, "message is required")
+		return
+	}
+	oopsie.Report("client_error", req.Message, req.Stack, map[string]any{
+		"request": map[string]string{"url": req.URL},
+		"extra":   req.Extra,
+	})
+	writeJSON(w, 202, map[string]bool{"received": true})
 }
 
 func (s *Server) fontFile(w http.ResponseWriter, r *http.Request) {
