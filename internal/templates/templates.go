@@ -186,7 +186,7 @@ func truncateRunes(s string, n int) string {
 
 // Builtins returns the built-in templates.
 func Builtins() []*Template {
-	return []*Template{inventoryTemplate(), productTagTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
+	return []*Template{inventoryTemplate(), productTagTemplate(), narrowTagTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
 }
 
 // Get returns a builtin by id.
@@ -263,6 +263,62 @@ func qrEstSide(data string, mag int) int {
 		modules = 41
 	}
 	return modules * mag
+}
+
+// ---- Narrow tag: a scissors-cut product tag at ~2/3 tape width. Large name
+// and price with the color and a short description between, hand-written.
+
+func narrowTagTemplate() *Template {
+	return &Template{
+		ID:          "narrow-tag",
+		Name:        "Narrow Tag",
+		Description: "Scissors-cut tag at ~2/3 tape width — name, color, description, price.",
+		Builtin:     true,
+		Fields: []Field{
+			{Key: "name", Label: "Product name", Type: "text", Required: true, Placeholder: "Bifold Wallet"},
+			{Key: "color", Label: "Color", Type: "text", Placeholder: "Cognac"},
+			{Key: "details", Label: "Description", Type: "textarea", Placeholder: "Full-grain leather, hand-stitched"},
+			{Key: "price", Label: "Price", Type: "text", Placeholder: "$85"},
+			fontField(), // ballpoint default
+		},
+		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
+			face := vars["font"]
+			// Content fills ~2/3 of the tape; the blank third is trimmed off.
+			cw := p.WidthDots*2/3 - margin
+			var body strings.Builder
+			y := margin
+
+			// Each block: (text, minPx, maxPx, maxLines, gapAfter). Large name
+			// and price bracket a smaller color + description.
+			blocks := []struct {
+				text                       string
+				minPx, maxPx, lines, after int
+			}{
+				{vars["name"], 40, 58, 2, 12},
+				{vars["color"], 24, 30, 1, 6},
+				{vars["details"], 22, 28, 3, 14},
+				{vars["price"], 38, 52, 1, 0},
+			}
+			for _, b := range blocks {
+				if strings.TrimSpace(b.text) == "" {
+					continue
+				}
+				frag, h, err := renderBlock(face, b.text, blockOpts{
+					x: margin, y: y, width: cw, maxLines: b.lines, minPx: b.minPx, maxPx: b.maxPx, lineGap: 6, align: fonts.AlignLeft,
+				})
+				if err != nil {
+					return Rendered{}, err
+				}
+				body.WriteString(frag)
+				y += h + b.after
+			}
+
+			length := y + margin
+			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
+			l.Raw(body.String())
+			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
+		},
+	}
 }
 
 // ---- Product tag: like Inventory, but hand-written in a pen font.

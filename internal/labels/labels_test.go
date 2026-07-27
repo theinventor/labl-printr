@@ -29,6 +29,12 @@ var sampleVars = map[string]map[string]string{
 		"price":   "$150",
 		"url":     "https://shop.example/live-edge-case",
 	},
+	"narrow-tag": {
+		"name":    "Bifold Wallet",
+		"color":   "Cognac",
+		"details": "Full-grain leather, hand-stitched",
+		"price":   "$85",
+	},
 }
 
 func TestFinalizeTrimsToContent(t *testing.T) {
