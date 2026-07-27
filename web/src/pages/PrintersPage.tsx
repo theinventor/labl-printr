@@ -29,7 +29,7 @@ export function PrintersPage() {
   const [discovering, setDiscovering] = useState(false);
   const [found, setFound] = useState<Discovered[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState({ name: '', host: '', dpi: '203' });
+  const [addForm, setAddForm] = useState({ name: '', host: '', dpi: '203', type: 'network' });
 
   const load = async () => {
     const list = await api.printers();
@@ -59,17 +59,23 @@ export function PrintersPage() {
     }
   };
 
-  const addPrinter = async (name: string, host: string, dpi: string) => {
+  const addPrinter = async (name: string, host: string, dpi: string, type: string) => {
     try {
-      await api.createPrinter({
-        name,
-        host,
-        kind: 'network',
-        port: 9100,
-        dpmm: dpi === '300' ? 12 : 8,
-        widthDots: dpi === '300' ? 720 : 487,
-        leftShift: dpi === '300' ? 280 : 172,
-      });
+      // Brother QL geometry is fixed (300dpi, 696-dot 62mm); the server fills
+      // in the dot math. Zebra needs the dpi choice.
+      const body =
+        type === 'brother'
+          ? { name, host, kind: 'brother' as const }
+          : {
+              name,
+              host,
+              kind: 'network' as const,
+              port: 9100,
+              dpmm: dpi === '300' ? 12 : 8,
+              widthDots: dpi === '300' ? 720 : 487,
+              leftShift: dpi === '300' ? 280 : 172,
+            };
+      await api.createPrinter(body);
       toast('ok', `Added ${name}`);
       setShowAdd(false);
       setFound(null);
@@ -144,7 +150,7 @@ export function PrintersPage() {
                       </span>
                     </div>
                     <button
-                      onClick={() => addPrinter(d.info[0] || `Zebra ${d.ip}`, d.ip, '203')}
+                      onClick={() => addPrinter(d.info[0] || `Zebra ${d.ip}`, d.ip, '203', 'network')}
                       className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-accent-hi"
                     >
                       Add
@@ -158,16 +164,16 @@ export function PrintersPage() {
 
         {showAdd && (
           <form
-            className="mb-4 grid gap-4 rounded-xl border border-edge bg-panel p-4 sm:grid-cols-[1fr_1fr_auto_auto]"
+            className="mb-4 grid gap-4 rounded-xl border border-edge bg-panel p-4 sm:grid-cols-[1fr_1fr_auto_auto_auto]"
             onSubmit={(e) => {
               e.preventDefault();
-              addPrinter(addForm.name, addForm.host, addForm.dpi);
+              addPrinter(addForm.name, addForm.host, addForm.dpi, addForm.type);
             }}
           >
             <Field label="Name">
               <input
                 className={inputCls}
-                placeholder="ZD421 — shop"
+                placeholder={addForm.type === 'brother' ? 'QL-820NWB — shop' : 'ZD421 — shop'}
                 value={addForm.name}
                 onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
                 required
@@ -176,16 +182,27 @@ export function PrintersPage() {
             <Field label="Host / IP">
               <input
                 className={inputCls}
-                placeholder="zbr1234.local or 10.0.0.50"
+                placeholder="10.0.0.50 or printer.local"
                 value={addForm.host}
                 onChange={(e) => setAddForm((f) => ({ ...f, host: e.target.value }))}
                 required
               />
             </Field>
-            <Field label="Resolution">
+            <Field label="Type">
               <select
                 className={inputCls}
-                value={addForm.dpi}
+                value={addForm.type}
+                onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}
+              >
+                <option value="network">Zebra (ZPL)</option>
+                <option value="brother">Brother QL</option>
+              </select>
+            </Field>
+            <Field label="Resolution">
+              <select
+                className={`${inputCls} ${addForm.type === 'brother' ? 'opacity-40' : ''}`}
+                value={addForm.type === 'brother' ? '300' : addForm.dpi}
+                disabled={addForm.type === 'brother'}
                 onChange={(e) => setAddForm((f) => ({ ...f, dpi: e.target.value }))}
               >
                 <option value="203">203 dpi</option>

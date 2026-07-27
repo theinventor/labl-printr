@@ -24,7 +24,7 @@ export type Template = {
 export type Printer = {
   id: number;
   name: string;
-  kind: 'network' | 'virtual';
+  kind: 'network' | 'virtual' | 'brother';
   host?: string;
   port: number;
   dpmm: number;

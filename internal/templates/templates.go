@@ -32,9 +32,10 @@ type Field struct {
 	Default     string `json:"default,omitempty"`
 }
 
-// fontField is the shared font-picker field for text templates.
+// fontField is the shared font-picker field for text templates. Defaults to
+// Ballpoint — a fine-point-pen hand that suits the handwritten-label look.
 func fontField() Field {
-	return Field{Key: "font", Label: "Font", Type: "font", Default: "system"}
+	return Field{Key: "font", Label: "Font", Type: "font", Default: "ballpoint"}
 }
 
 // blockOpts configures a text block that renders either as native ZPL (system
@@ -149,6 +150,13 @@ func (t *Template) Render(vars map[string]string, p Profile, copies int) (Render
 			v = truncateRunes(v, maxFieldRunes)
 		}
 		capped[k] = v
+	}
+	// Apply field defaults for anything the caller left empty, so a template's
+	// default font applies whether the request came from the web UI or the CLI.
+	for _, f := range t.Fields {
+		if f.Default != "" && strings.TrimSpace(capped[f.Key]) == "" {
+			capped[f.Key] = f.Default
+		}
 	}
 	vars = capped
 

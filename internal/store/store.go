@@ -83,8 +83,9 @@ CREATE TABLE IF NOT EXISTS virtual_prints (
 // ---- Printers
 
 const (
-	KindNetwork = "network"
-	KindVirtual = "virtual"
+	KindNetwork = "network" // Zebra / ZPL over raw TCP 9100
+	KindVirtual = "virtual" // built-in, renders to the tray
+	KindBrother = "brother" // Brother QL raster over raw TCP 9100
 )
 
 type Printer struct {
