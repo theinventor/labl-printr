@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/theinventor/labl-printr/internal/brother"
+	"github.com/theinventor/labl-printr/internal/dymo"
+	"github.com/theinventor/labl-printr/internal/media"
 	"github.com/theinventor/labl-printr/internal/oopsie"
 	"github.com/theinventor/labl-printr/internal/printer"
 	"github.com/theinventor/labl-printr/internal/render"
@@ -101,6 +103,8 @@ func (m *Manager) run(printerID, jobID int64) {
 		sendErr = m.virtual.SendJob(jobID, j.ZPL)
 	case store.KindBrother:
 		sendErr = sendBrother(p, j)
+	case store.KindDymo:
+		sendErr = sendDymo(p, j)
 	default:
 		t := &printer.TCP{Host: p.Host, Port: p.Port}
 		sendErr = t.Send(j.ZPL)
@@ -139,18 +143,49 @@ func sendBrother(p store.Printer, j store.Job) error {
 	if err != nil {
 		return err
 	}
-	// DK-2251 (black/red 62mm) is the roll loaded on Troy's QL-820NWB; it
-	// requires 2-color formatting. TODO: make the media a printer setting once
-	// a second roll type is in play.
-	// Copies ride one atomic multi-page job so a mid-copy failure can't leave
-	// the printer half-done with the job marked failed (→ reprint duplicates).
+	// The loaded media decides 2-color vs mono. DK-2251 (black/red) rejects a
+	// mono job; DK-2205 is mono. Copies ride one atomic multi-page job so a
+	// mid-copy failure can't half-print and then mark the job failed.
+	roll := brother.DK2251Continuous
+	if m, ok := media.Get(p.Media); ok && !m.TwoColor {
+		roll = brother.DK2205Continuous
+	}
 	data, err := brother.EncodePNG(png, brother.Options{
-		Media: brother.DK2251Continuous, AutoCut: true, Copies: j.Copies,
+		Media: roll, AutoCut: true, Copies: j.Copies,
 	})
 	if err != nil {
 		return err
 	}
 	return brother.Send(p.Host, p.Port, data)
+}
+
+// sendDymo renders the label to a PNG and submits it to the DYMO's networked
+// CUPS queue over IPP. The label renders landscape at the media's reading width;
+// CUPS fits it to the loaded die-cut label. The CUPS queue name is stored in the
+// printer's Serial field (defaults to "dymo").
+func sendDymo(p store.Printer, j store.Job) error {
+	png, err := render.PNG(j.ZPL, j.WidthDots, j.LengthDots, p.Dpmm)
+	if err != nil {
+		return err
+	}
+	queue := p.Serial
+	if queue == "" {
+		queue = "dymo"
+	}
+	var pageSize string
+	if mm, ok := media.Get(p.Media); ok {
+		pageSize = mm.CupsPageSize
+	}
+	copies := j.Copies
+	if copies < 1 {
+		copies = 1
+	}
+	for i := 0; i < copies; i++ {
+		if err := dymo.Submit(p.Host, queue, pageSize, png); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PrinterStatus returns live status for a printer record.
@@ -164,6 +199,11 @@ func (m *Manager) PrinterStatus(p store.Printer) printer.Status {
 			return printer.Status{Ready: true, Reachable: true}
 		}
 		return printer.Status{Detail: "unreachable"}
+	case store.KindDymo:
+		if dymo.Reachable(p.Host) {
+			return printer.Status{Ready: true, Reachable: true}
+		}
+		return printer.Status{Detail: "cups unreachable"}
 	default:
 		t := &printer.TCP{Host: p.Host, Port: p.Port}
 		return t.Status()

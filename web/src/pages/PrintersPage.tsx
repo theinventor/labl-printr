@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   api,
   type Discovered,
+  type MediaOption,
   type Printer,
   type PrinterStatus,
   type TrayPrint,
@@ -30,6 +31,7 @@ export function PrintersPage() {
   const [found, setFound] = useState<Discovered[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', host: '', dpi: '203', type: 'network' });
+  const [mediaByKind, setMediaByKind] = useState<Record<string, MediaOption[]>>({});
 
   const load = async () => {
     const list = await api.printers();
@@ -39,8 +41,23 @@ export function PrintersPage() {
     );
   };
 
+  const changeMedia = async (id: number, mediaId: string) => {
+    try {
+      await api.setPrinterMedia(id, mediaId);
+      toast('ok', 'Loaded media updated');
+      load();
+    } catch (e) {
+      toast('err', (e as Error).message);
+    }
+  };
+
   useEffect(() => {
     load();
+    api.media().then((all) => {
+      const grouped: Record<string, MediaOption[]> = {};
+      for (const m of all) (grouped[m.kind] ??= []).push(m);
+      setMediaByKind(grouped);
+    });
     api.tray(24).then(setTray);
     const t = setInterval(() => api.tray(24).then(setTray), 5000);
     return () => clearInterval(t);
@@ -63,9 +80,10 @@ export function PrintersPage() {
     try {
       // Brother QL geometry is fixed (300dpi, 696-dot 62mm); the server fills
       // in the dot math. Zebra needs the dpi choice.
+      // Brother and DYMO geometry come from the loaded media, filled server-side.
       const body =
-        type === 'brother'
-          ? { name, host, kind: 'brother' as const }
+        type === 'brother' || type === 'dymo'
+          ? { name, host, kind: type as 'brother' | 'dymo' }
           : {
               name,
               host,
@@ -196,13 +214,14 @@ export function PrintersPage() {
               >
                 <option value="network">Zebra (ZPL)</option>
                 <option value="brother">Brother QL</option>
+                <option value="dymo">DYMO (CUPS)</option>
               </select>
             </Field>
             <Field label="Resolution">
               <select
-                className={`${inputCls} ${addForm.type === 'brother' ? 'opacity-40' : ''}`}
-                value={addForm.type === 'brother' ? '300' : addForm.dpi}
-                disabled={addForm.type === 'brother'}
+                className={`${inputCls} ${addForm.type !== 'network' ? 'opacity-40' : ''}`}
+                value={addForm.type !== 'network' ? '300' : addForm.dpi}
+                disabled={addForm.type !== 'network'}
                 onChange={(e) => setAddForm((f) => ({ ...f, dpi: e.target.value }))}
               >
                 <option value="203">203 dpi</option>
@@ -238,6 +257,24 @@ export function PrintersPage() {
               <div className="mt-1 font-mono text-[12.5px] text-fg-dim">
                 status: {statusText(statuses[p.id])}
               </div>
+              {p.kind !== 'virtual' && (mediaByKind[p.kind]?.length ?? 0) > 0 && (
+                <label className="mt-3 block">
+                  <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+                    Loaded media — update when you swap paper
+                  </span>
+                  <select
+                    className={`${inputCls} py-1.5 text-[13px]`}
+                    value={p.media}
+                    onChange={(e) => changeMedia(p.id, e.target.value)}
+                  >
+                    {mediaByKind[p.kind].map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="mt-3 flex gap-2">
                 {!p.isDefault && (
                   <button

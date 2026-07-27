@@ -24,13 +24,22 @@ export type Template = {
 export type Printer = {
   id: number;
   name: string;
-  kind: 'network' | 'virtual' | 'brother';
+  kind: 'network' | 'virtual' | 'brother' | 'dymo';
   host?: string;
   port: number;
   dpmm: number;
   widthDots: number;
   leftShift: number;
   isDefault: boolean;
+  media: string;
+};
+
+export type MediaOption = {
+  id: string;
+  name: string;
+  kind: string;
+  continuous: boolean;
+  twoColor: boolean;
 };
 
 export type PrinterStatus = {
@@ -104,6 +113,9 @@ export const api = {
   createPrinter: (body: Partial<Printer>) => request<Printer>('POST', '/api/printers', body),
   deletePrinter: (id: number) => request<unknown>('DELETE', `/api/printers/${id}`),
   setDefault: (id: number) => request<unknown>('POST', `/api/printers/${id}/default`),
+  media: (kind?: string) => request<MediaOption[]>('GET', `/api/media${kind ? `?kind=${kind}` : ''}`),
+  setPrinterMedia: (id: number, media: string) =>
+    request<Printer>('POST', `/api/printers/${id}/media`, { media }),
   discover: () => request<Discovered[]>('POST', '/api/printers/discover'),
   tray: (limit = 30) => request<TrayPrint[]>('GET', `/api/tray?limit=${limit}`),
 };
