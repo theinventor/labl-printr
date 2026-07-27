@@ -164,7 +164,18 @@ func sendBrother(p store.Printer, j store.Job) error {
 // CUPS fits it to the loaded die-cut label. The CUPS queue name is stored in the
 // printer's Serial field (defaults to "dymo").
 func sendDymo(p store.Printer, j store.Job) error {
-	png, err := render.PNG(j.ZPL, j.WidthDots, j.LengthDots, p.Dpmm)
+	// Die-cut labels are a fixed size, so render at the media's full length
+	// (content padded to fit) rather than the content-trimmed length — otherwise
+	// CUPS fit-to-page scales the wrong aspect ratio onto the die-cut stock.
+	lengthDots := j.LengthDots
+	var pageSize string
+	if mm, ok := media.Get(p.Media); ok {
+		pageSize = mm.CupsPageSize
+		if !mm.Continuous && mm.LengthDots > lengthDots {
+			lengthDots = mm.LengthDots
+		}
+	}
+	png, err := render.PNG(j.ZPL, j.WidthDots, lengthDots, p.Dpmm)
 	if err != nil {
 		return err
 	}
@@ -172,20 +183,8 @@ func sendDymo(p store.Printer, j store.Job) error {
 	if queue == "" {
 		queue = "dymo"
 	}
-	var pageSize string
-	if mm, ok := media.Get(p.Media); ok {
-		pageSize = mm.CupsPageSize
-	}
-	copies := j.Copies
-	if copies < 1 {
-		copies = 1
-	}
-	for i := 0; i < copies; i++ {
-		if err := dymo.Submit(p.Host, queue, pageSize, png); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Copies ride one IPP job so a mid-copy failure can't half-print.
+	return dymo.Submit(p.Host, queue, pageSize, j.Copies, png)
 }
 
 // PrinterStatus returns live status for a printer record.

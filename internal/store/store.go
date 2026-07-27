@@ -181,17 +181,14 @@ func (s *Store) SetDefaultPrinter(id int64) error {
 	return nil
 }
 
-// SetPrinterMedia records which label stock is loaded — set from the web UI
-// when the paper is swapped.
-func (s *Store) SetPrinterMedia(id int64, media string) error {
-	_, err := s.db.Exec("UPDATE printers SET media = ? WHERE id = ?", media, id)
-	return err
-}
-
-// UpdatePrinterGeometry updates the dot math derived from the loaded media.
-func (s *Store) UpdatePrinterGeometry(id int64, dpmm, widthDots, leftShift int) error {
-	_, err := s.db.Exec("UPDATE printers SET dpmm = ?, width_dots = ?, left_shift = ? WHERE id = ?",
-		dpmm, widthDots, leftShift, id)
+// SetPrinterMedia records which label stock is loaded and the geometry derived
+// from it — set from the web UI when the paper is swapped. Media and geometry
+// update together in one statement so a job worker never sees new media with
+// old geometry.
+func (s *Store) SetPrinterMedia(id int64, media string, dpmm, widthDots, leftShift int) error {
+	_, err := s.db.Exec(
+		"UPDATE printers SET media = ?, dpmm = ?, width_dots = ?, left_shift = ? WHERE id = ?",
+		media, dpmm, widthDots, leftShift, id)
 	return err
 }
 

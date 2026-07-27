@@ -500,9 +500,12 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 		if p.Media == "" {
 			p.Media = media.DefaultFor(p.Kind).ID
 		}
-		if m, ok := media.Get(p.Media); ok {
-			applyMediaGeometry(&p, m)
+		m, ok := media.Get(p.Media)
+		if !ok || m.Kind != p.Kind {
+			writeErr(w, 422, "media %q is not valid for a %s printer", p.Media, p.Kind)
+			return
 		}
+		applyMediaGeometry(&p, m)
 	}
 	// A hostile widthDots flows straight into raster allocation for bitmap
 	// fonts, ahead of the render-time canvas guard — clamp it at the source.
@@ -583,13 +586,9 @@ func (s *Server) setPrinterMedia(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 422, "media %q is for %s printers, not %s", req.Media, m.Kind, p.Kind)
 		return
 	}
-	// Update the media and its derived geometry together.
+	// Update the media and its derived geometry together (one statement).
 	applyMediaGeometry(&p, m)
-	if err := s.Store.SetPrinterMedia(id, req.Media); err != nil {
-		writeErr(w, 500, "%v", err)
-		return
-	}
-	if err := s.Store.UpdatePrinterGeometry(id, p.Dpmm, p.WidthDots, p.LeftShift); err != nil {
+	if err := s.Store.SetPrinterMedia(id, req.Media, p.Dpmm, p.WidthDots, p.LeftShift); err != nil {
 		writeErr(w, 500, "%v", err)
 		return
 	}

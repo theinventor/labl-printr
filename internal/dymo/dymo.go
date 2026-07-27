@@ -18,9 +18,9 @@ var client = &http.Client{Timeout: 15 * time.Second}
 
 // Submit sends a PNG label to the CUPS queue at host (default IPP port 631).
 // pageSize is the CUPS media name for the loaded die-cut stock (e.g.
-// "w81h252"); empty uses the queue default. fit-to-page scales the label onto
-// the die-cut label.
-func Submit(host, queue, pageSize string, png []byte) error {
+// "w81h252"); empty uses the queue default. copies>1 rides the IPP job so all
+// copies are one atomic job. fit-to-page scales the label onto the die-cut.
+func Submit(host, queue, pageSize string, copies int, png []byte) error {
 	if queue == "" {
 		queue = "dymo"
 	}
@@ -37,6 +37,9 @@ func Submit(host, queue, pageSize string, png []byte) error {
 	msg.Job.Add(goipp.MakeAttribute("fit-to-page", goipp.TagBoolean, goipp.Boolean(true)))
 	if pageSize != "" {
 		msg.Job.Add(goipp.MakeAttribute("media", goipp.TagKeyword, goipp.String(pageSize)))
+	}
+	if copies > 1 {
+		msg.Job.Add(goipp.MakeAttribute("copies", goipp.TagInteger, goipp.Integer(copies)))
 	}
 
 	header, err := msg.EncodeBytes()
