@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS printers (
   width_dots  INTEGER NOT NULL DEFAULT 487,
   left_shift  INTEGER NOT NULL DEFAULT 0,
   is_default  INTEGER NOT NULL DEFAULT 0,
+  media       TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS custom_templates (
@@ -77,7 +78,20 @@ CREATE TABLE IF NOT EXISTS virtual_prints (
   png        BLOB NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add columns introduced after the initial schema. SQLite has no
+	// ADD COLUMN IF NOT EXISTS, so ignore the duplicate-column error on
+	// databases that already have it.
+	for _, alter := range []string{
+		`ALTER TABLE printers ADD COLUMN media TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- Printers
@@ -86,12 +100,13 @@ const (
 	KindNetwork = "network" // Zebra / ZPL over raw TCP 9100
 	KindVirtual = "virtual" // built-in, renders to the tray
 	KindBrother = "brother" // Brother QL raster over raw TCP 9100
+	KindDymo    = "dymo"    // DYMO LabelWriter via a networked CUPS queue (IPP)
 )
 
 type Printer struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
-	Kind      string `json:"kind"` // network | virtual
+	Kind      string `json:"kind"` // network | virtual | brother | dymo
 	Serial    string `json:"serial,omitempty"`
 	Host      string `json:"host,omitempty"`
 	Port      int    `json:"port"`
@@ -99,19 +114,20 @@ type Printer struct {
 	WidthDots int    `json:"widthDots"`
 	LeftShift int    `json:"leftShift"`
 	IsDefault bool   `json:"isDefault"`
+	Media     string `json:"media"` // loaded media id (see internal/media)
 	CreatedAt string `json:"createdAt"`
 }
 
 func scanPrinter(row interface{ Scan(...any) error }) (Printer, error) {
 	var p Printer
-	var serial, host sql.NullString
+	var serial, host, media sql.NullString
 	var def int
-	err := row.Scan(&p.ID, &p.Name, &p.Kind, &serial, &host, &p.Port, &p.Dpmm, &p.WidthDots, &p.LeftShift, &def, &p.CreatedAt)
-	p.Serial, p.Host, p.IsDefault = serial.String, host.String, def == 1
+	err := row.Scan(&p.ID, &p.Name, &p.Kind, &serial, &host, &p.Port, &p.Dpmm, &p.WidthDots, &p.LeftShift, &def, &media, &p.CreatedAt)
+	p.Serial, p.Host, p.IsDefault, p.Media = serial.String, host.String, def == 1, media.String
 	return p, err
 }
 
-const printerCols = "id, name, kind, serial, host, port, dpmm, width_dots, left_shift, is_default, created_at"
+const printerCols = "id, name, kind, serial, host, port, dpmm, width_dots, left_shift, is_default, media, created_at"
 
 func (s *Store) Printers() ([]Printer, error) {
 	rows, err := s.db.Query("SELECT " + printerCols + " FROM printers ORDER BY is_default DESC, name")
@@ -143,9 +159,9 @@ func (s *Store) DefaultPrinter() (Printer, error) {
 }
 
 func (s *Store) CreatePrinter(p Printer) (Printer, error) {
-	res, err := s.db.Exec(`INSERT INTO printers (name, kind, serial, host, port, dpmm, width_dots, left_shift, is_default)
-		VALUES (?,?,?,?,?,?,?,?,?)`,
-		p.Name, p.Kind, nullable(p.Serial), nullable(p.Host), p.Port, p.Dpmm, p.WidthDots, p.LeftShift, boolInt(p.IsDefault))
+	res, err := s.db.Exec(`INSERT INTO printers (name, kind, serial, host, port, dpmm, width_dots, left_shift, is_default, media)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		p.Name, p.Kind, nullable(p.Serial), nullable(p.Host), p.Port, p.Dpmm, p.WidthDots, p.LeftShift, boolInt(p.IsDefault), p.Media)
 	if err != nil {
 		return Printer{}, err
 	}
@@ -163,6 +179,17 @@ func (s *Store) SetDefaultPrinter(id int64) error {
 		return err
 	}
 	return nil
+}
+
+// SetPrinterMedia records which label stock is loaded and the geometry derived
+// from it — set from the web UI when the paper is swapped. Media and geometry
+// update together in one statement so a job worker never sees new media with
+// old geometry.
+func (s *Store) SetPrinterMedia(id int64, media string, dpmm, widthDots, leftShift int) error {
+	_, err := s.db.Exec(
+		"UPDATE printers SET media = ?, dpmm = ?, width_dots = ?, left_shift = ? WHERE id = ?",
+		media, dpmm, widthDots, leftShift, id)
+	return err
 }
 
 func (s *Store) DeletePrinter(id int64) error {

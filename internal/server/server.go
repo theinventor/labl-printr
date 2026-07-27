@@ -24,6 +24,7 @@ import (
 	"github.com/theinventor/labl-printr/internal/fonts"
 	"github.com/theinventor/labl-printr/internal/jobs"
 	"github.com/theinventor/labl-printr/internal/labels"
+	"github.com/theinventor/labl-printr/internal/media"
 	"github.com/theinventor/labl-printr/internal/oopsie"
 	"github.com/theinventor/labl-printr/internal/printer"
 	"github.com/theinventor/labl-printr/internal/render"
@@ -68,10 +69,12 @@ func (s *Server) Router() http.Handler {
 		api.Get("/jobs/{id}", s.getJob)
 		api.Get("/jobs/{id}/preview.png", s.jobPreview)
 		api.Post("/jobs/{id}/reprint", s.reprint)
+		api.Get("/media", s.listMedia)
 		api.Get("/printers", s.listPrinters)
 		api.Post("/printers", s.createPrinter)
 		api.Delete("/printers/{id}", s.deletePrinter)
 		api.Post("/printers/{id}/default", s.setDefaultPrinter)
+		api.Post("/printers/{id}/media", s.setPrinterMedia)
 		api.Get("/printers/{id}/status", s.printerStatus)
 		api.Post("/printers/discover", s.discover)
 		api.Post("/designer-import", s.designerImport)
@@ -487,35 +490,22 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Port == 0 {
 		p.Port = 9100
+		if p.Kind == store.KindDymo {
+			p.Port = 631 // CUPS / IPP
+		}
 	}
-	// Geometry defaults per printer family, so printers added via CLI/curl get
-	// the right dot math without the web form having to know it. The Brother
-	// QL-820NWB is 300dpi with 696 printable dots on 62mm tape and centers
-	// content in its own raster driver (no ZPL left-shift).
-	switch p.Kind {
-	case store.KindBrother:
-		if p.Dpmm == 0 {
-			p.Dpmm = 12
+	// The loaded media drives geometry. Default to the family's first media, and
+	// copy its dot math into the printer so the render path stays media-agnostic.
+	if p.Kind != store.KindVirtual {
+		if p.Media == "" {
+			p.Media = media.DefaultFor(p.Kind).ID
 		}
-		if p.WidthDots == 0 {
-			p.WidthDots = 696
+		m, ok := media.Get(p.Media)
+		if !ok || m.Kind != p.Kind {
+			writeErr(w, 422, "media %q is not valid for a %s printer", p.Media, p.Kind)
+			return
 		}
-	default:
-		if p.Dpmm == 0 {
-			p.Dpmm = 8
-		}
-		if p.WidthDots == 0 {
-			p.WidthDots = 487
-			if p.Dpmm == 12 {
-				p.WidthDots = 720
-			}
-		}
-		if p.LeftShift == 0 && p.Kind == store.KindNetwork {
-			p.LeftShift = 172 // ZD-series narrow-media centering shift
-			if p.Dpmm == 12 {
-				p.LeftShift = 280
-			}
-		}
+		applyMediaGeometry(&p, m)
 	}
 	// A hostile widthDots flows straight into raster allocation for bitmap
 	// fonts, ahead of the render-time canvas guard — clamp it at the source.
@@ -547,6 +537,63 @@ func (s *Server) deletePrinter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"deleted": true})
+}
+
+// applyMediaGeometry copies a media's dot math onto a printer so the render
+// path (profileFor) stays media-agnostic.
+func applyMediaGeometry(p *store.Printer, m media.Media) {
+	if m.Dpmm > 0 {
+		p.Dpmm = m.Dpmm
+	}
+	if m.WidthDots > 0 {
+		p.WidthDots = m.WidthDots
+	}
+	p.LeftShift = m.LeftShift
+}
+
+func (s *Server) listMedia(w http.ResponseWriter, r *http.Request) {
+	kind := r.URL.Query().Get("kind")
+	list := media.Catalog
+	if kind != "" {
+		list = media.ForKind(kind)
+	}
+	if list == nil {
+		list = []media.Media{}
+	}
+	writeJSON(w, 200, list)
+}
+
+func (s *Server) setPrinterMedia(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	p, err := s.Store.Printer(id)
+	if err != nil {
+		writeErr(w, 404, "printer not found")
+		return
+	}
+	var req struct {
+		Media string `json:"media"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad json: %v", err)
+		return
+	}
+	m, ok := media.Get(req.Media)
+	if !ok {
+		writeErr(w, 422, "unknown media %q", req.Media)
+		return
+	}
+	if m.Kind != p.Kind {
+		writeErr(w, 422, "media %q is for %s printers, not %s", req.Media, m.Kind, p.Kind)
+		return
+	}
+	// Update the media and its derived geometry together (one statement).
+	applyMediaGeometry(&p, m)
+	if err := s.Store.SetPrinterMedia(id, req.Media, p.Dpmm, p.WidthDots, p.LeftShift); err != nil {
+		writeErr(w, 500, "%v", err)
+		return
+	}
+	updated, _ := s.Store.Printer(id)
+	writeJSON(w, 200, updated)
 }
 
 func (s *Server) setDefaultPrinter(w http.ResponseWriter, r *http.Request) {
