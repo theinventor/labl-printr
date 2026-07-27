@@ -86,9 +86,30 @@ export function PrintPage() {
   const [printing, setPrinting] = useState(false);
   const [showZpl, setShowZpl] = useState(false);
   const [actualSize, setActualSize] = useState(false);
+  const [sample, setSample] = useState<Preview | null>(null);
   const debounceRef = useRef<number>(0);
 
   const template = useMemo(() => templates.find((t) => t.id === selected), [templates, selected]);
+
+  // Example preview: render the selected template with its placeholder values,
+  // so you can see what a filled-in label looks like before typing anything.
+  useEffect(() => {
+    if (!template) return;
+    setSample(null);
+    const sampleVars: Record<string, string> = {};
+    for (const f of template.fields) {
+      const v = f.placeholder || f.default || '';
+      if (v) sampleVars[f.key] = v;
+    }
+    let cancelled = false;
+    api
+      .preview({ templateId: template.id, vars: sampleVars, printerId })
+      .then((p) => !cancelled && setSample(p))
+      .catch(() => !cancelled && setSample(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [template, printerId]);
 
   useEffect(() => {
     api.templates().then((list) => {
@@ -335,6 +356,29 @@ export function PrintPage() {
           <pre className="mt-3 max-h-56 overflow-auto rounded-xl border border-edge bg-panel p-4 font-mono text-[12px] leading-relaxed text-fg-dim">
             {preview.zpl}
           </pre>
+        )}
+
+        {sample && (
+          <div className="mt-5">
+            <div className="mb-1.5 flex items-center gap-2 px-1">
+              <span className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-fg-dim">
+                Example
+              </span>
+              <span className="text-[11px] text-fg-dim/60">— what a filled-in {template?.name} looks like</span>
+            </div>
+            <div className="dotgrid flex items-start justify-center rounded-xl border border-edge/60 bg-ink/60 p-4">
+              <div className="paper overflow-hidden opacity-90" style={{ width: '100%', maxWidth: '100%' }}>
+                <div className="paper-perf" />
+                <img
+                  src={`data:image/png;base64,${sample.png}`}
+                  alt="Example label"
+                  className="block w-full"
+                  style={{ imageRendering: 'crisp-edges' }}
+                />
+                <div className="paper-perf" />
+              </div>
+            </div>
+          </div>
         )}
       </section>
     </div>

@@ -184,9 +184,9 @@ func truncateRunes(s string, n int) string {
 	return string(r[:n])
 }
 
-// Builtins returns the four v1 templates.
+// Builtins returns the built-in templates.
 func Builtins() []*Template {
-	return []*Template{inventoryTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
+	return []*Template{inventoryTemplate(), productTagTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
 }
 
 // Get returns a builtin by id.
@@ -263,6 +263,74 @@ func qrEstSide(data string, mag int) int {
 		modules = 41
 	}
 	return modules * mag
+}
+
+// ---- Product tag: like Inventory, but hand-written in a pen font.
+
+func productTagTemplate() *Template {
+	return &Template{
+		ID:          "product-tag",
+		Name:        "Product Tag",
+		Description: "Hand-written product tag — name, details, price, and a QR code.",
+		Builtin:     true,
+		Fields: []Field{
+			{Key: "name", Label: "Product name", Type: "text", Required: true, Placeholder: "Live Edge Laptop Case"},
+			{Key: "details", Label: "Details", Type: "textarea", Placeholder: "North American leather with a live edge, SKU ABC123"},
+			{Key: "price", Label: "Price", Type: "text", Placeholder: "$150"},
+			{Key: "url", Label: "QR link URL", Type: "url", Required: true, Placeholder: "https://shop.example/live-edge-case"},
+			fontField(), // defaults to ballpoint
+		},
+		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
+			face := vars["font"]
+			qrMag := 4
+			if len(vars["url"]) > 60 {
+				qrMag = 3
+			}
+			qrSide := qrEstSide(vars["url"], qrMag)
+			textW := p.WidthDots - qrSide - margin*3
+
+			// Stack name → details → price down the left column, in the pen font.
+			var body strings.Builder
+			y := margin
+			nameFrag, nameH, err := renderBlock(face, vars["name"], blockOpts{
+				x: margin, y: y, width: textW, maxLines: 3, minPx: 34, maxPx: 60, lineGap: 8, align: fonts.AlignLeft,
+			})
+			if err != nil {
+				return Rendered{}, err
+			}
+			body.WriteString(nameFrag)
+			y += nameH + 14
+
+			if strings.TrimSpace(vars["details"]) != "" {
+				frag, h, err := renderBlock(face, vars["details"], blockOpts{
+					x: margin, y: y, width: textW, maxLines: 4, minPx: 22, maxPx: 32, lineGap: 6, align: fonts.AlignLeft,
+				})
+				if err != nil {
+					return Rendered{}, err
+				}
+				body.WriteString(frag)
+				y += h + 16
+			}
+
+			if strings.TrimSpace(vars["price"]) != "" {
+				frag, h, err := renderBlock(face, vars["price"], blockOpts{
+					x: margin, y: y, width: textW, maxLines: 1, minPx: 40, maxPx: 64, lineGap: 0, align: fonts.AlignLeft,
+				})
+				if err != nil {
+					return Rendered{}, err
+				}
+				body.WriteString(frag)
+				y += h
+			}
+
+			// Label is as tall as the taller of the text column or the QR.
+			length := max(y+margin, margin*2+qrSide)
+			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
+			l.Raw(body.String())
+			l.QR(p.WidthDots-qrSide-margin, margin, qrMag, vars["url"])
+			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
+		},
+	}
 }
 
 // ---- Large print: text as big as fits.
