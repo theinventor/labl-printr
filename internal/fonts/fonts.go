@@ -33,9 +33,17 @@ type Face struct {
 // maps to ZPL's resident scalable font (^A0) — the original look.
 var registry = []*Face{
 	{ID: "system", Name: "Printer default", Style: "system", file: ""},
+	// Fine-point-pen handwriting — thin single-stroke, looks hand-written.
+	{ID: "caveat", Name: "Caveat", Style: "handwriting", file: "files/Caveat-Regular.ttf"},
+	{ID: "shadows", Name: "Shadows Into Light", Style: "handwriting", file: "files/ShadowsIntoLight-Regular.ttf"},
+	{ID: "ballpoint", Name: "Ballpoint", Style: "handwriting", file: "files/NothingYouCouldDo-Regular.ttf"},
+	{ID: "reenie", Name: "Reenie Beanie", Style: "handwriting", file: "files/ReenieBeanie-Regular.ttf"},
+	{ID: "justhand", Name: "Just Another Hand", Style: "handwriting", file: "files/JustAnotherHand-Regular.ttf"},
+	{ID: "kalam-fine", Name: "Kalam Fine", Style: "handwriting", file: "files/Kalam-Regular.ttf"},
+	// Bolder / marker styles.
 	{ID: "marker", Name: "Marker", Style: "handwriting", file: "files/PermanentMarker-Regular.ttf"},
 	{ID: "patrick", Name: "Patrick Hand", Style: "handwriting", file: "files/PatrickHand-Regular.ttf"},
-	{ID: "kalam", Name: "Kalam", Style: "handwriting", file: "files/Kalam-Bold.ttf"},
+	{ID: "kalam", Name: "Kalam Bold", Style: "handwriting", file: "files/Kalam-Bold.ttf"},
 	{ID: "gochi", Name: "Gochi Hand", Style: "handwriting", file: "files/GochiHand-Regular.ttf"},
 	{ID: "indie", Name: "Indie Flower", Style: "handwriting", file: "files/IndieFlower-Regular.ttf"},
 	{ID: "architect", Name: "Architect", Style: "handwriting", file: "files/ArchitectsDaughter-Regular.ttf"},

@@ -52,12 +52,22 @@ labl print … --dry-run                          # validate + size only
 labl jobs · labl reprint 12 · labl status · labl printers · labl discover
 ```
 
-### Docker
+### Docker (recommended for always-on / agent use)
 
 ```sh
-docker build -t labl-printr .
-docker run -d -p 5225:5225 -p 9100:9100 -v labl-data:/home/labl/data labl-printr
+docker compose up -d --build     # web UI + API on http://<host>:5225
 ```
+
+The container reaches printers by IP over your LAN, so it just needs to be on the same network. The SQLite DB (printers + job history) persists in a named volume, so your printer stays registered across restarts.
+
+## Supported printers
+
+| Printer | Protocol | Media |
+|---|---|---|
+| Zebra ZD421 (and ZPL printers) | ZPL over raw TCP 9100 | 2.4″ continuous |
+| **Brother QL-820NWB** | Brother QL raster over TCP 9100 | 62mm continuous (DK-2251 black/red, DK-2205 mono) |
+
+Add either from **Printers → Add manually** (pick the type) or auto-discover Zebras with **Scan network**. The Brother path renders each label to a bitmap and sends it as a 2-color raster job.
 
 ## Adding your real printer
 

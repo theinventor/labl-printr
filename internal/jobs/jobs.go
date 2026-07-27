@@ -7,7 +7,9 @@ import (
 	"log"
 	"sync"
 
+	"github.com/theinventor/labl-printr/internal/brother"
 	"github.com/theinventor/labl-printr/internal/printer"
+	"github.com/theinventor/labl-printr/internal/render"
 	"github.com/theinventor/labl-printr/internal/store"
 )
 
@@ -96,6 +98,8 @@ func (m *Manager) run(printerID, jobID int64) {
 	switch p.Kind {
 	case store.KindVirtual:
 		sendErr = m.virtual.SendJob(jobID, j.ZPL)
+	case store.KindBrother:
+		sendErr = sendBrother(p, j)
 	default:
 		t := &printer.TCP{Host: p.Host, Port: p.Port}
 		sendErr = t.Send(j.ZPL)
@@ -116,11 +120,48 @@ func (m *Manager) setState(jobID int64, state, errMsg string) {
 	}
 }
 
+// sendBrother renders the job's label to a bitmap at the printer's geometry and
+// ships it as a Brother raster job. The label is already rendered to exact
+// pixels for preview; the Brother just consumes those pixels.
+func sendBrother(p store.Printer, j store.Job) error {
+	// Render at the Brother's own printable width (696), not the job's stored
+	// width — a raw/custom job could carry a wider ^PW that Encode would
+	// silently clip.
+	width := p.WidthDots
+	if width <= 0 {
+		width = 696
+	}
+	png, err := render.PNG(j.ZPL, width, j.LengthDots, p.Dpmm)
+	if err != nil {
+		return err
+	}
+	// DK-2251 (black/red 62mm) is the roll loaded on Troy's QL-820NWB; it
+	// requires 2-color formatting. TODO: make the media a printer setting once
+	// a second roll type is in play.
+	// Copies ride one atomic multi-page job so a mid-copy failure can't leave
+	// the printer half-done with the job marked failed (→ reprint duplicates).
+	data, err := brother.EncodePNG(png, brother.Options{
+		Media: brother.DK2251Continuous, AutoCut: true, Copies: j.Copies,
+	})
+	if err != nil {
+		return err
+	}
+	return brother.Send(p.Host, p.Port, data)
+}
+
 // PrinterStatus returns live status for a printer record.
 func (m *Manager) PrinterStatus(p store.Printer) printer.Status {
-	if p.Kind == store.KindVirtual {
+	switch p.Kind {
+	case store.KindVirtual:
 		return m.virtual.Status()
+	case store.KindBrother:
+		// No ~HS equivalent over the network; reachability is the only signal.
+		if brother.Reachable(p.Host, p.Port) {
+			return printer.Status{Ready: true, Reachable: true}
+		}
+		return printer.Status{Detail: "unreachable"}
+	default:
+		t := &printer.TCP{Host: p.Host, Port: p.Port}
+		return t.Status()
 	}
-	t := &printer.TCP{Host: p.Host, Port: p.Port}
-	return t.Status()
 }

@@ -1,0 +1,22 @@
+# labl-printr on a LAN server. The container reaches printers by IP over your
+# network, so it just needs to be on the same LAN as the Brother/Zebra.
+#
+#   docker compose up -d --build
+#   → web UI + API on http://<this-host>:5225
+#
+# The SQLite DB (printers, job history) persists in the named volume, so your
+# printer stays registered across restarts and upgrades.
+services:
+  labl-printr:
+    build: .
+    image: labl-printr
+    container_name: labl-printr
+    restart: unless-stopped
+    ports:
+      - "5225:5225" # web UI + REST API
+      - "9100:9100" # virtual printer (raw ZPL in → tray); remove if unused
+    volumes:
+      - labl-data:/home/labl/data
+
+volumes:
+  labl-data:

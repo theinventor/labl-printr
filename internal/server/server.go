@@ -432,16 +432,33 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 	if p.Port == 0 {
 		p.Port = 9100
 	}
-	if p.Dpmm == 0 {
-		p.Dpmm = 8
-	}
-	// Per-dpi geometry for 2.4" media lives here, not in the web form, so
-	// printers added via CLI or curl get the same dot math and the ZD-series
-	// narrow-media centering shift.
-	if p.WidthDots == 0 {
-		p.WidthDots = 487
-		if p.Dpmm == 12 {
-			p.WidthDots = 720
+	// Geometry defaults per printer family, so printers added via CLI/curl get
+	// the right dot math without the web form having to know it. The Brother
+	// QL-820NWB is 300dpi with 696 printable dots on 62mm tape and centers
+	// content in its own raster driver (no ZPL left-shift).
+	switch p.Kind {
+	case store.KindBrother:
+		if p.Dpmm == 0 {
+			p.Dpmm = 12
+		}
+		if p.WidthDots == 0 {
+			p.WidthDots = 696
+		}
+	default:
+		if p.Dpmm == 0 {
+			p.Dpmm = 8
+		}
+		if p.WidthDots == 0 {
+			p.WidthDots = 487
+			if p.Dpmm == 12 {
+				p.WidthDots = 720
+			}
+		}
+		if p.LeftShift == 0 && p.Kind == store.KindNetwork {
+			p.LeftShift = 172 // ZD-series narrow-media centering shift
+			if p.Dpmm == 12 {
+				p.LeftShift = 280
+			}
 		}
 	}
 	// A hostile widthDots flows straight into raster allocation for bitmap
@@ -449,12 +466,6 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 	if p.WidthDots > labels.MaxWidthDots {
 		writeErr(w, 422, "widthDots %d exceeds the maximum %d", p.WidthDots, labels.MaxWidthDots)
 		return
-	}
-	if p.LeftShift == 0 && p.Kind == store.KindNetwork {
-		p.LeftShift = 172
-		if p.Dpmm == 12 {
-			p.LeftShift = 280
-		}
 	}
 	created, err := s.Store.CreatePrinter(p)
 	if err != nil {
