@@ -82,8 +82,8 @@ export function PrintersPage() {
       // in the dot math. Zebra needs the dpi choice.
       // Brother and DYMO geometry come from the loaded media, filled server-side.
       const body =
-        type === 'brother' || type === 'dymo'
-          ? { name, host, kind: type as 'brother' | 'dymo' }
+        type === 'brother' || type === 'dymo' || type === 'cups'
+          ? { name, host, kind: type as 'brother' | 'dymo' | 'cups' }
           : {
               name,
               host,
@@ -215,6 +215,7 @@ export function PrintersPage() {
                 <option value="network">Zebra (ZPL)</option>
                 <option value="brother">Brother QL</option>
                 <option value="dymo">DYMO (CUPS)</option>
+                <option value="cups">CUPS / office (Ricoh)</option>
               </select>
             </Field>
             <Field label="Resolution">

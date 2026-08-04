@@ -103,8 +103,8 @@ func (m *Manager) run(printerID, jobID int64) {
 		sendErr = m.virtual.SendJob(jobID, j.ZPL)
 	case store.KindBrother:
 		sendErr = sendBrother(p, j)
-	case store.KindDymo:
-		sendErr = sendDymo(p, j)
+	case store.KindDymo, store.KindCups:
+		sendErr = sendViaCups(p, j)
 	default:
 		t := &printer.TCP{Host: p.Host, Port: p.Port}
 		sendErr = t.Send(j.ZPL)
@@ -159,18 +159,24 @@ func sendBrother(p store.Printer, j store.Job) error {
 	return brother.Send(p.Host, p.Port, data)
 }
 
-// sendDymo renders the label to a PNG and submits it to the DYMO's networked
-// CUPS queue over IPP. The label renders landscape at the media's reading width;
-// CUPS fits it to the loaded die-cut label. The CUPS queue name is stored in the
-// printer's Serial field (defaults to "dymo").
-func sendDymo(p store.Printer, j store.Job) error {
-	// Die-cut labels are a fixed size, so render at the media's full length
-	// (content padded to fit) rather than the content-trimmed length — otherwise
-	// CUPS fit-to-page scales the wrong aspect ratio onto the die-cut stock.
+// sendViaCups renders the label to a PNG and submits it to a networked CUPS
+// queue over IPP — the transport for the DYMO (USB on the Pi) and any office
+// printer fronted by CUPS (the Ricoh MFP). The CUPS queue name is stored in the
+// printer's Serial field. The loaded media decides page size, fit-to-page, and
+// (for die-cut) the fixed render length.
+func sendViaCups(p store.Printer, j store.Job) error {
 	lengthDots := j.LengthDots
 	var pageSize string
+	fitToPage := true
+	queue := p.Serial
+	if queue == "" {
+		queue = "dymo"
+	}
 	if mm, ok := media.Get(p.Media); ok {
 		pageSize = mm.CupsPageSize
+		fitToPage = mm.FitToPage
+		// Fixed-size stock renders at its full length (content padded), so
+		// CUPS fit-to-page doesn't distort the aspect ratio.
 		if !mm.Continuous && mm.LengthDots > lengthDots {
 			lengthDots = mm.LengthDots
 		}
@@ -179,12 +185,8 @@ func sendDymo(p store.Printer, j store.Job) error {
 	if err != nil {
 		return err
 	}
-	queue := p.Serial
-	if queue == "" {
-		queue = "dymo"
-	}
 	// Copies ride one IPP job so a mid-copy failure can't half-print.
-	return dymo.Submit(p.Host, queue, pageSize, j.Copies, png)
+	return dymo.Submit(p.Host, queue, pageSize, fitToPage, j.Copies, png)
 }
 
 // PrinterStatus returns live status for a printer record.
@@ -198,7 +200,7 @@ func (m *Manager) PrinterStatus(p store.Printer) printer.Status {
 			return printer.Status{Ready: true, Reachable: true}
 		}
 		return printer.Status{Detail: "unreachable"}
-	case store.KindDymo:
+	case store.KindDymo, store.KindCups:
 		if dymo.Reachable(p.Host) {
 			return printer.Status{Ready: true, Reachable: true}
 		}

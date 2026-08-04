@@ -17,10 +17,11 @@ import (
 var client = &http.Client{Timeout: 15 * time.Second}
 
 // Submit sends a PNG label to the CUPS queue at host (default IPP port 631).
-// pageSize is the CUPS media name for the loaded die-cut stock (e.g.
-// "w81h252"); empty uses the queue default. copies>1 rides the IPP job so all
-// copies are one atomic job. fit-to-page scales the label onto the die-cut.
-func Submit(host, queue, pageSize string, copies int, png []byte) error {
+// pageSize is the CUPS media name (e.g. "w81h252" or "Letter"); empty uses the
+// queue default. fitToPage scales the label to fill the page (die-cut labels)
+// vs printing at actual size (office paper). copies>1 rides the IPP job so all
+// copies are one atomic job.
+func Submit(host, queue, pageSize string, fitToPage bool, copies int, png []byte) error {
 	if queue == "" {
 		queue = "dymo"
 	}
@@ -34,7 +35,9 @@ func Submit(host, queue, pageSize string, copies int, png []byte) error {
 	msg.Operation.Add(goipp.MakeAttribute("requesting-user-name", goipp.TagName, goipp.String("labl-printr")))
 	msg.Operation.Add(goipp.MakeAttribute("job-name", goipp.TagName, goipp.String("labl-printr")))
 	msg.Operation.Add(goipp.MakeAttribute("document-format", goipp.TagMimeType, goipp.String("image/png")))
-	msg.Job.Add(goipp.MakeAttribute("fit-to-page", goipp.TagBoolean, goipp.Boolean(true)))
+	if fitToPage {
+		msg.Job.Add(goipp.MakeAttribute("fit-to-page", goipp.TagBoolean, goipp.Boolean(true)))
+	}
 	if pageSize != "" {
 		msg.Job.Add(goipp.MakeAttribute("media", goipp.TagKeyword, goipp.String(pageSize)))
 	}

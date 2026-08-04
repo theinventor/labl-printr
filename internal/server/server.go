@@ -490,7 +490,7 @@ func (s *Server) createPrinter(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Port == 0 {
 		p.Port = 9100
-		if p.Kind == store.KindDymo {
+		if p.Kind == store.KindDymo || p.Kind == store.KindCups {
 			p.Port = 631 // CUPS / IPP
 		}
 	}

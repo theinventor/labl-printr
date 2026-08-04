@@ -17,7 +17,8 @@ type Media struct {
 
 	// Driver specifics.
 	TwoColor     bool   `json:"twoColor"`               // Brother black/red roll
-	CupsPageSize string `json:"cupsPageSize,omitempty"` // DYMO CUPS media name
+	CupsPageSize string `json:"cupsPageSize,omitempty"` // CUPS media name (DYMO/office)
+	FitToPage    bool   `json:"fitToPage"`              // scale label to fill the page (die-cut); off = actual size
 }
 
 // Catalog is every known media, grouped by the printer kind it fits.
@@ -32,9 +33,14 @@ var Catalog = []Media{
 
 	// DYMO LabelWriter die-cut. WidthDots is the reading (long) dimension; the
 	// label prints landscape and CUPS fits it to the die-cut page size.
-	{ID: "dymo-address", Name: `Address 1.1"×3.5" (30252)`, Kind: "dymo", Dpmm: 12, WidthDots: 1050, LengthDots: 337, CupsPageSize: "w81h252"},
-	{ID: "dymo-3x1", Name: `3"×1" die-cut`, Kind: "dymo", Dpmm: 12, WidthDots: 900, LengthDots: 300, CupsPageSize: "w72h216"},
-	{ID: "dymo-shipping", Name: `Shipping 2.3"×4" (30256)`, Kind: "dymo", Dpmm: 12, WidthDots: 1200, LengthDots: 690, CupsPageSize: "w167h288"},
+	{ID: "dymo-address", Name: `Address 1.1"×3.5" (30252)`, Kind: "dymo", Dpmm: 12, WidthDots: 1050, LengthDots: 337, CupsPageSize: "w81h252", FitToPage: true},
+	{ID: "dymo-3x1", Name: `3"×1" die-cut`, Kind: "dymo", Dpmm: 12, WidthDots: 900, LengthDots: 300, CupsPageSize: "w72h216", FitToPage: true},
+	{ID: "dymo-shipping", Name: `Shipping 2.3"×4" (30256)`, Kind: "dymo", Dpmm: 12, WidthDots: 1200, LengthDots: 690, CupsPageSize: "w167h288", FitToPage: true},
+
+	// Office printers via a CUPS queue (e.g. the Ricoh MFP). The label renders
+	// at a shipping-label size and prints at actual size on the sheet.
+	{ID: "letter", Name: `Letter 8.5"×11" (4×6 label area)`, Kind: "cups", Dpmm: 12, WidthDots: 1200, LengthDots: 1800, CupsPageSize: "Letter", FitToPage: false},
+	{ID: "letter-fill", Name: `Letter 8.5"×11" (fill page)`, Kind: "cups", Dpmm: 8, WidthDots: 1700, LengthDots: 2200, CupsPageSize: "Letter", FitToPage: true},
 }
 
 // ForKind returns the media choices valid for a printer family.
