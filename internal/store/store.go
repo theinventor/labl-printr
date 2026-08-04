@@ -101,6 +101,7 @@ const (
 	KindVirtual = "virtual" // built-in, renders to the tray
 	KindBrother = "brother" // Brother QL raster over raw TCP 9100
 	KindDymo    = "dymo"    // DYMO LabelWriter via a networked CUPS queue (IPP)
+	KindCups    = "cups"    // any CUPS queue over IPP (office/network printers, e.g. Ricoh)
 )
 
 type Printer struct {
