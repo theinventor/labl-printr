@@ -89,6 +89,13 @@ func (l *Label) QR(x, y, magnification int, data string) {
 	fmt.Fprintf(&l.buf, "^FO%d,%d^BQN,2,%d^FH^FDMA,%s^FS\n", x, y, magnification, hexEscape(data))
 }
 
+// Code128 places a Code 128 barcode with a human-readable interpretation line
+// beneath it. height is the bar height in dots; ^BY2 (narrow bar = 2 dots) scans
+// reliably at ~300dpi. Auto subset handles alphanumeric SKUs (e.g. AHS-CLU-ENV-CML).
+func (l *Label) Code128(x, y, height int, data string) {
+	fmt.Fprintf(&l.buf, "^BY2,3,%d^FO%d,%d^BCN,%d,Y,N,N^FD%s^FS\n", height, x, y, height, escape(data))
+}
+
 // hexEscape encodes ^FH field data: the hex-escape introducer _ plus ZPL's
 // control characters become _XX hex codes.
 func hexEscape(s string) string {
