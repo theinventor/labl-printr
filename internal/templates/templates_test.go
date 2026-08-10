@@ -17,6 +17,12 @@ var sampleVars = map[string]map[string]string{
 		"info": "12mm, black oxide, qty 100",
 		"url":  "https://inv.ranch.local/items/hw-m3-012",
 	},
+	"inventory-shopify-pos": {
+		"name": "M3 socket head screws",
+		"sku":  "HW-M3-012",
+		"info": "12mm, black oxide, qty 100",
+		"url":  "https://inv.ranch.local/items/hw-m3-012",
+	},
 	"large-print": {"text": "FRAGILE"},
 	"small-print": {"text": "HDMI 8ft — office TV, port 2"},
 	"packing": {

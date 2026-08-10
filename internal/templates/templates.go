@@ -186,7 +186,7 @@ func truncateRunes(s string, n int) string {
 
 // Builtins returns the built-in templates.
 func Builtins() []*Template {
-	return []*Template{inventoryTemplate(), productTagTemplate(), narrowTagTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
+	return []*Template{inventoryTemplate(), inventoryShopifyPOSTemplate(), productTagTemplate(), narrowTagTemplate(), largePrintTemplate(), smallPrintTemplate(), packingTemplate()}
 }
 
 // Get returns a builtin by id.
@@ -250,6 +250,69 @@ func inventoryTemplate() *Template {
 			}
 			qrX := p.WidthDots - qrSide - margin
 			l.QR(qrX, margin, qrMag, vars["url"])
+			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
+		},
+	}
+}
+
+// inventoryShopifyPOSTemplate is the Inventory label, byte-for-byte, with a Code 128
+// barcode of the SKU added along the bottom. Scanning that barcode in Shopify POS
+// matches the product variant's Barcode field (which we set to the SKU).
+func inventoryShopifyPOSTemplate() *Template {
+	return &Template{
+		ID:          "inventory-shopify-pos",
+		Name:        "Inventory (Shopify POS)",
+		Description: "The Inventory label plus a Code 128 barcode of the SKU along the bottom, for Shopify POS scanning.",
+		Builtin:     true,
+		Fields: []Field{
+			{Key: "name", Label: "Product name", Type: "text", Required: true, Placeholder: "M3 socket head screws"},
+			{Key: "sku", Label: "SKU", Type: "text", Required: true, Placeholder: "HW-M3-012"},
+			{Key: "info", Label: "Details", Type: "textarea", Placeholder: "12mm, black oxide, qty 100"},
+			{Key: "url", Label: "QR link URL", Type: "url", Required: true, Placeholder: "https://inventory.example/items/123"},
+		},
+		render: func(vars map[string]string, p Profile, copies int) (Rendered, error) {
+			// --- identical to inventoryTemplate above ---
+			qrMag := 4
+			if len(vars["url"]) > 60 {
+				qrMag = 3
+			}
+			qrSide := qrEstSide(vars["url"], qrMag)
+			textW := p.WidthDots - qrSide - margin*3
+
+			nameH := zpl.FitFontHeight(vars["name"], textW, 28, 44)
+			nameLines := min(zpl.EstLines(vars["name"], nameH, textW), 3)
+			skuH := 30
+			infoH := 24
+			infoLines := 0
+			if strings.TrimSpace(vars["info"]) != "" {
+				infoLines = min(zpl.EstLines(vars["info"], infoH, textW), 4)
+			}
+
+			y := margin
+			textBottom := y + nameLines*(nameH+4) + 10 + skuH + 8
+			if infoLines > 0 {
+				textBottom += 6 + infoLines*(infoH+4)
+			}
+			// Where the original Inventory content ends (text column vs QR block).
+			contentBottom := max(textBottom, margin*2+qrSide)
+
+			// --- the only addition: a Code 128 of the SKU below that content ---
+			const barH = 84
+			barcodeY := contentBottom + 18
+			length := barcodeY + barH + 36 + margin // bars + interpretation line + bottom margin
+
+			l := zpl.NewLabel(p.WidthDots, length, p.LeftShift)
+			l.TextBlock(margin, y, nameH, textW, nameLines, 4, zpl.JustifyLeft, vars["name"])
+			y += nameLines*(nameH+4) + 10
+			l.Text(margin, y, skuH, "SKU "+vars["sku"])
+			y += skuH + 8
+			if infoLines > 0 {
+				y += 6
+				l.TextBlock(margin, y, infoH, textW, infoLines, 4, zpl.JustifyLeft, vars["info"])
+			}
+			qrX := p.WidthDots - qrSide - margin
+			l.QR(qrX, margin, qrMag, vars["url"])
+			l.Code128(margin, barcodeY, barH, vars["sku"])
 			return Rendered{ZPL: l.End(copies), LengthDots: length}, nil
 		},
 	}
