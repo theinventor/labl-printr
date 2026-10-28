@@ -23,6 +23,7 @@ import (
 
 	"github.com/theinventor/labl-printr/internal/fonts"
 	"github.com/theinventor/labl-printr/internal/jobs"
+	"github.com/theinventor/labl-printr/internal/labelpolicy"
 	"github.com/theinventor/labl-printr/internal/labels"
 	"github.com/theinventor/labl-printr/internal/media"
 	"github.com/theinventor/labl-printr/internal/oopsie"
@@ -446,6 +447,10 @@ func (s *Server) reprint(w http.ResponseWriter, r *http.Request) {
 	j, err := s.Store.Job(id)
 	if err != nil {
 		writeErr(w, 404, "job not found")
+		return
+	}
+	if err := labelpolicy.Validate(j.TemplateID, j.Vars); err != nil {
+		writeErr(w, 400, "%v", err)
 		return
 	}
 	clone, _, err := s.Store.CreateJob(store.Job{

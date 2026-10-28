@@ -97,3 +97,9 @@ labl-printr has **no authentication, by design** — it trusts your LAN exactly 
 Single Go binary: chi HTTP server + SQLite (pure-Go driver) + embedded [zebrash](https://github.com/ingridhq/zebrash) ZPL renderer — previews and the virtual printer render the **exact bytes** sent to hardware, so preview == print. The ZPL builder is ~200 lines in `internal/zpl` (kept in-house so the project stays MIT; the fancier layout engines are GPL). Research on the landscape that shaped all this: [RESEARCH.md](RESEARCH.md).
 
 Hardware target: Zebra ZD421 (Link-OS), 2.4″ continuous direct-thermal media, ZPL over raw TCP 9100, status via `~HS`/`~HQES` on the dedicated 9200 channel.
+
+## Shopify POS customer QR safety
+
+`inventory-shopify-pos` requires an HTTPS `/products/<handle>` storefront URL. VM/tailnet, private-IP, local-network, admin and malformed variant URLs are rejected before a print or preview request. The server applies the same policy when rendering or reprinting a stored job. This prevents historical bad labels from bypassing validation through Reprint. The generic `inventory` template remains available for internal inventory systems.
+
+For Andherson stickers, read the authoritative public storefront URL and colorway variant ID from Studio. Never substitute an unpublished Studio page. Decode the QR from every rendered batch preview before printing. The QR selects the customer product/colorway; the Code 128 barcode encodes its Shopify POS SKU. Print numbered physical pieces sequentially, waiting for each job before sending the next.

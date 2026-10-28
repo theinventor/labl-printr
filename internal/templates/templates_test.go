@@ -21,7 +21,7 @@ var sampleVars = map[string]map[string]string{
 		"name": "M3 socket head screws",
 		"sku":  "HW-M3-012",
 		"info": "12mm, black oxide, qty 100",
-		"url":  "https://inv.ranch.local/items/hw-m3-012",
+		"url":  "https://andherson.com/products/landscape-journal-medium?variant=67909533925455",
 	},
 	"large-print": {"text": "FRAGILE"},
 	"small-print": {"text": "HDMI 8ft — office TV, port 2"},
