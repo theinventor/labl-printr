@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/theinventor/labl-printr/internal/fonts"
+	"github.com/theinventor/labl-printr/internal/labelpolicy"
 	"github.com/theinventor/labl-printr/internal/zpl"
 )
 
@@ -140,6 +141,10 @@ const maxFieldRunes = 2000
 
 // Render produces final ZPL for the given variables and printer profile.
 func (t *Template) Render(vars map[string]string, p Profile, copies int) (Rendered, error) {
+	if err := labelpolicy.Validate(t.ID, vars); err != nil {
+		return Rendered{}, err
+	}
+
 	// Copy and cap field values so we never mutate the caller's map and never
 	// hand an unbounded string to a renderer.
 	capped := make(map[string]string, len(vars))

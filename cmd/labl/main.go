@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/theinventor/labl-printr/internal/labelpolicy"
 )
 
 var stdout = tabbed(os.Stdout)
@@ -121,6 +122,9 @@ func cmdPrint() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := labelpolicy.Validate(args[0], vars); err != nil {
+				return err
+			}
 			body := map[string]any{
 				"templateId": args[0], "vars": vars, "copies": f.copies,
 				"printer": f.printer, "source": "cli", "idempotencyKey": f.idempotencyKey,
@@ -163,6 +167,9 @@ func cmdPreview() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vars, err := parseVars(f.vars)
 			if err != nil {
+				return err
+			}
+			if err := labelpolicy.Validate(args[0], vars); err != nil {
 				return err
 			}
 			var res previewResult
@@ -336,6 +343,16 @@ func cmdReprint() *cobra.Command {
 	return &cobra.Command{
 		Use: "reprint <job-id>", Short: "Print a past job again, byte-identical", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var saved struct {
+				TemplateID string            `json:"templateId"`
+				Vars       map[string]string `json:"vars"`
+			}
+			if err := newClient().do("GET", "/api/jobs/"+args[0], nil, &saved); err != nil {
+				return err
+			}
+			if err := labelpolicy.Validate(saved.TemplateID, saved.Vars); err != nil {
+				return err
+			}
 			var job jobInfo
 			if err := newClient().do("POST", "/api/jobs/"+args[0]+"/reprint", nil, &job); err != nil {
 				return err
